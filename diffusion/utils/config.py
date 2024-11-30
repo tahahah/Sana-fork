@@ -93,7 +93,16 @@ class TextEncoderConfig(BaseConfig):
     y_norm: bool = True
     y_norm_scale_factor: float = 1.0
     model_max_length: int = 300
-    chi_prompt: List[Optional[str]] = field(default_factory=lambda: [])
+    chi_prompt: List[Optional[str]] = field(default_factory=lambda: []) # Complex Human Instruction Prompt
+    extra: Any = None
+
+@dataclass
+class ActionEncoderConfig(BaseConfig):
+    action_encoder_name: str = "ActionEncoder"
+    caption_channels: int = 5
+    y_norm: bool = True
+    y_norm_scale_factor: float = 1.0
+    model_max_length: int = 64
     extra: Any = None
 
 
