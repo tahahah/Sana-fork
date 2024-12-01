@@ -1,0 +1,20 @@
+FROM pytorch/pytorch:2.1.0-cuda12.1-cudnn8-runtime
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy the repository
+COPY . .
+
+# Install Python dependencies
+RUN pip install -U pip && \
+    pip install -U xformers==0.0.27.post2 --index-url https://download.pytorch.org/whl/cu121 && \
+    pip install -e . && \
+    pip install timm==1.0.11 \
+                diffusers==0.31.0 \
+                mmcv==1.7.1 \
+                datasets

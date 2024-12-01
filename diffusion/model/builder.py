@@ -40,6 +40,10 @@ def build_model(cfg, use_grad_checkpoint=False, use_fp32_attention=False, gc_ste
         set_fp32_attention(model)
     return model
 
+def get_action_encoder(name, device="cuda"):
+    if name == "sdxl":
+        action_encoder = torch.load("action_encoder.pt").to(device).to(torch.float16)
+    return action_encoder
 
 def get_tokenizer_and_text_encoder(name="T5", device="cuda"):
     text_encoder_dict = {
