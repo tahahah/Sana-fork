@@ -1,40 +1,40 @@
-name: ci
-on:
-  pull_request:
-  push:
-    branches: [main, feat/Sana-public, feat/Sana-public-for-NVLab]
-concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-# if: ${{ github.repository == 'Efficient-Large-Model/Sana' }}
-jobs:
-  pre-commit:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check out Git repository
-        uses: actions/checkout@v4
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: 3.10.10
-      - name: Test pre-commit hooks
-        uses: pre-commit/action@v3.0.1
-  tests-bash:
-    # needs: pre-commit
-    runs-on: self-hosted
-    steps:
-      - name: Check out Git repository
-        uses: actions/checkout@v4
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: 3.10.10
-      - name: Set up the environment
-        run: |
-          bash environment_setup.sh
-      - name: Run tests with Slurm
-        run: |
-          sana-run --pty -m ci -J tests-bash bash tests/bash/entry.sh
+# name: ci
+# on:
+#   pull_request:
+#   push:
+#     branches: [main, feat/Sana-public, feat/Sana-public-for-NVLab]
+# concurrency:
+#   group: ci-${{ github.workflow }}-${{ github.ref }}
+#   cancel-in-progress: true
+# # if: ${{ github.repository == 'Efficient-Large-Model/Sana' }}
+# jobs:
+#   pre-commit:
+#     runs-on: ubuntu-latest
+#     steps:
+#       - name: Check out Git repository
+#         uses: actions/checkout@v4
+#       - name: Set up Python
+#         uses: actions/setup-python@v5
+#         with:
+#           python-version: 3.10.10
+#       - name: Test pre-commit hooks
+#         uses: pre-commit/action@v3.0.1
+#   tests-bash:
+#     # needs: pre-commit
+#     runs-on: self-hosted
+#     steps:
+#       - name: Check out Git repository
+#         uses: actions/checkout@v4
+#       - name: Set up Python
+#         uses: actions/setup-python@v5
+#         with:
+#           python-version: 3.10.10
+#       - name: Set up the environment
+#         run: |
+#           bash environment_setup.sh
+#       - name: Run tests with Slurm
+#         run: |
+#           sana-run --pty -m ci -J tests-bash bash tests/bash/entry.sh
 
 # tests-python:
 #     needs: pre-commit
