@@ -416,3 +416,7 @@ def SanaMS_1600M_P1_D20(**kwargs):
 def SanaMS_1600M_P2_D20(**kwargs):
     # 28 layers, 1648.48M
     return SanaMS(depth=20, hidden_size=2240, patch_size=2, num_heads=20, **kwargs)
+
+@MODELS.register_module()
+def SanaMS_PACMAN_P1_D12(**kwargs):
+    return SanaMS(depth=12, hidden_size=120, patch_size=1, num_heads=12, **kwargs)
