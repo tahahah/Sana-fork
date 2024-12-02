@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Build the Docker image
-docker build -t sana-test -f Dockerfile.test .
+docker build -t pacman-test -f Dockerfile.test .
 
-# Run the tests
-docker run --rm sana-test python -m unittest tests/test_pacman_dataset.py -v
+# Run the tests with volume mount for hot reloading and increased shared memory
+docker run --gpus all --rm --shm-size=1g -v $(pwd):/app pacman-test python -m unittest tests/test_pacman_dataset.py -v
