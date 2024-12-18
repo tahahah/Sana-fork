@@ -82,14 +82,38 @@ class MultiHeadCrossAttention(nn.Module):
 
         if _xformers_available:
             attn_bias = None
-            if mask is not None:
-                attn_bias = xformers.ops.fmha.BlockDiagonalMask.from_seqlens([N] * B, mask)
-            x = xformers.ops.memory_efficient_attention(q, k, v, p=self.attn_drop.p, attn_bias=attn_bias)
+            #TODO: remove hardcoded null mask
+            mask = None
+            if mask is not None and isinstance(mask, list):
+                # Convert float to int for sequence lengths
+                seq_lens = [int(length) for length in mask]
+                attn_bias = xformers.ops.fmha.BlockDiagonalMask.from_seqlens([N], seq_lens)
+            try:
+                x = xformers.ops.memory_efficient_attention(
+                    q, k, v,
+                    p=self.attn_drop.p,
+                    attn_bias=attn_bias
+                )
+            except RuntimeError as e:
+                print(f"Flash attention failed: {e}")
+                # Fallback to vanilla attention
+                q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
+                if mask is not None and isinstance(mask, list):
+                    # Create attention mask from sequence lengths
+                    max_len = k.size(2)
+                    mask_tensor = torch.zeros((1, 1, 1, max_len), device=q.device, dtype=q.dtype)
+                    mask_tensor[..., :int(mask[0])] = 1  # Convert float to int
+                    mask = mask_tensor
+                x = F.scaled_dot_product_attention(q, k, v, attn_mask=mask, dropout_p=0.0, is_causal=False)
+                x = x.transpose(1, 2)
         else:
             q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
-            if mask is not None and mask.ndim == 2:
-                mask = (1 - mask.to(x.dtype)) * -10000.0
-                mask = mask[:, None, None].repeat(1, self.num_heads, 1, 1)
+            if mask is not None and isinstance(mask, list):
+                # Create attention mask from sequence lengths
+                max_len = k.size(2)
+                mask_tensor = torch.zeros((1, 1, 1, max_len), device=q.device, dtype=q.dtype)
+                mask_tensor[..., :int(mask[0])] = 1  # Convert float to int
+                mask = mask_tensor
             x = F.scaled_dot_product_attention(q, k, v, attn_mask=mask, dropout_p=0.0, is_causal=False)
             x = x.transpose(1, 2)
 
@@ -642,7 +666,11 @@ class CaptionEmbedder(nn.Module):
 
     def forward(self, caption, train, force_drop_ids=None, mask=None):
         if train:
-            assert caption.shape[2:] == self.y_embedding.shape
+            try:
+                assert caption.shape[2:] == self.y_embedding.shape
+            except AssertionError:
+                print(f"Assertion failed: caption.shape[2:] = {caption.shape[2:]}, self.y_embedding.shape = {self.y_embedding.shape}")
+                raise
         use_dropout = self.uncond_prob > 0
         if (train and use_dropout) or (force_drop_ids is not None):
             caption = self.token_drop(caption, force_drop_ids)

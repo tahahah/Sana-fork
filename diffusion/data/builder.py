@@ -56,11 +56,19 @@ def build_dataset(cfg, resolution=224, **kwargs):
     t = time.time()
     transform = cfg.pop("transform", "default_train")
     transform = get_transform(transform, resolution)
-    dataset = build_from_cfg(cfg, DATASETS, default_args=dict(transform=transform, resolution=resolution, **kwargs))
-    logger.info(
-        f"{colored(f'Dataset {dataset_type} constructed: ', 'green', attrs=['bold'])}"
-        f"time: {(time.time() - t):.2f} s, length (use/ori): {len(dataset)}/{dataset.ori_imgs_nums}"
-    )
+    dataset = build_from_cfg(cfg, DATASETS, default_args=dict(resolution=resolution, config=cfg, **kwargs))
+    
+    # Handle both IterableDataset and regular Dataset
+    if hasattr(dataset, '__len__'):
+        logger.info(
+            f"{colored(f'Dataset {dataset_type} constructed: ', 'green', attrs=['bold'])}"
+            f"time: {(time.time() - t):.2f} s, length (use/ori): {len(dataset)}/{getattr(dataset, 'ori_imgs_nums', len(dataset))}"
+        )
+    else:
+        logger.info(
+            f"{colored(f'IterableDataset {dataset_type} constructed: ', 'green', attrs=['bold'])}"
+            f"time: {(time.time() - t):.2f} s"
+        )
     return dataset
 
 

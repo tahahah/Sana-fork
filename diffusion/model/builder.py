@@ -90,13 +90,16 @@ def get_vae(name, model_path, device="cuda"):
     elif "dc-ae" in name:
         print(colored(f"[DC-AE] Loading model from {model_path}", attrs=["bold"]))
         dc_ae = DCAE_HF.from_pretrained(model_path).to(device).eval()
+        # Set scaling factor from config if not already set
+        if dc_ae.cfg.scaling_factor is None:
+            dc_ae.cfg.scaling_factor = 0.41407  # Default from config
         return dc_ae
     else:
         print("error load vae")
         exit()
 
 
-def vae_encode(name, vae, images, sample_posterior, device):
+def vae_encode(name, vae, images, device, sample_posterior=None):
     if name == "sdxl" or name == "sd3":
         posterior = vae.encode(images.to(device)).latent_dist
         if sample_posterior:

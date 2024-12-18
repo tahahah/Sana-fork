@@ -38,12 +38,17 @@ class DataConfig(BaseConfig):
     valid_num: int = 0
     data: Any = None
     extra: Any = None
+    resolution: int = 512
+    sequence_length: int = 32
+    buffer_size: int = 1000
+    prefetch_factor: int = 2
 
 
 @dataclass
 class ModelConfig(BaseConfig):
     model: str = "SanaMS_600M_P1_D28"
     image_size: int = 512
+    in_channels: int = 32
     mixed_precision: str = "fp16"  # ['fp16', 'fp32', 'bf16']
     fp32_attention: bool = True
     load_from: Optional[str] = None
@@ -70,6 +75,7 @@ class ModelConfig(BaseConfig):
     linear_head_dim: int = 32
     cross_norm: bool = False
     cfg_scale: int = 4
+    num_classes: int = 5
     guidance_type: str = "classifier-free"
     pag_applied_layers: List[int] = field(default_factory=lambda: [14])
     extra: Any = None
@@ -187,15 +193,15 @@ class SanaConfig(BaseConfig):
     data: DataConfig
     model: ModelConfig
     vae: AEConfig
-    text_encoder: TextEncoderConfig
     scheduler: SchedulerConfig
     train: TrainingConfig
+    text_encoder: Optional[TextEncoderConfig] = None
     work_dir: str = "output/"
     resume_from: Optional[str] = None
     load_from: Optional[str] = None
     debug: bool = False
     caching: bool = False
     report_to: str = "wandb"
-    tracker_project_name: str = "t2i-evit-baseline"
+    tracker_project_name: str = "pacman-sana-3.2m"
     name: str = "baseline"
     loss_report_name: str = "loss"

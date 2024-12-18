@@ -378,7 +378,7 @@ def model_wrapper(
         else:
             return t_continuous
 
-    def noise_pred_fn(x, t_continuous, cond=None):
+    def noise_pred_fn(x, t_continuous, cond=None, **model_kwargs):
         t_input = get_model_input_time(t_continuous)
         if cond is None:
             output = model(x, t_input, **model_kwargs)
@@ -437,10 +437,18 @@ def model_wrapper(
                 x_in = torch.cat([x] * 2)
                 t_in = torch.cat([t_continuous] * 2)
                 c_in = torch.cat([unconditional_condition, condition])
+                
+                # Only double specific tensor inputs that need to be doubled
+                kwargs_copy = model_kwargs.copy()
+                if 'obs' in kwargs_copy:
+                    kwargs_copy['obs'] = torch.cat([kwargs_copy['obs']] * 2)
+                if 'x_pixel_space' in kwargs_copy:
+                    kwargs_copy['x_pixel_space'] = torch.cat([kwargs_copy['x_pixel_space']] * 2)
+                
                 try:
-                    noise_uncond, noise = noise_pred_fn(x_in, t_in, cond=c_in).chunk(2)
+                    noise_uncond, noise = noise_pred_fn(x_in, t_in, cond=c_in, **kwargs_copy).chunk(2)
                 except:
-                    noise_uncond, noise = noise_pred_fn(x_in, t_in, cond=c_in)[0].chunk(2)
+                    noise_uncond, noise = noise_pred_fn(x_in, t_in, cond=c_in, **kwargs_copy)[0].chunk(2)
                 return noise_uncond + guidance_scale * (noise - noise_uncond)
         elif guidance_tp == "classifier-free_PAG":
             for i in pag_applied_layers:

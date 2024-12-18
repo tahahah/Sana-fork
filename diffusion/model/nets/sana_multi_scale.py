@@ -34,7 +34,7 @@ from diffusion.model.nets.sana_blocks import (
 )
 from diffusion.model.utils import auto_grad_checkpoint
 from diffusion.utils.import_utils import is_triton_module_available, is_xformers_available
-
+import logging
 _triton_modules_available = False
 if is_triton_module_available():
     from diffusion.model.nets.fastlinear.modules import TritonLiteMLA, TritonMBConvPreGLU
@@ -418,5 +418,18 @@ def SanaMS_1600M_P2_D20(**kwargs):
     return SanaMS(depth=20, hidden_size=2240, patch_size=2, num_heads=20, **kwargs)
 
 @MODELS.register_module()
+def SanaMS_PACMAN_P1_D12_OLD(**kwargs):
+    return SanaMS(depth=12, hidden_size=128, patch_size=1, num_heads=16, **kwargs)
+
+from diffusion.model.nets.pacman_diffusion import PacmanDiffusionModel
+
+@MODELS.register_module()
 def SanaMS_PACMAN_P1_D12(**kwargs):
-    return SanaMS(depth=12, hidden_size=120, patch_size=1, num_heads=12, **kwargs)
+    """Factory function for PacmanDiffusionModel following Sana naming convention."""
+    return PacmanDiffusionModel(
+        depth=12,
+        hidden_size=128,
+        patch_size=1,
+        num_heads=16,
+        **kwargs
+    )

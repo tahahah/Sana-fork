@@ -17,12 +17,17 @@
 import os
 import random
 import re
-
+import huggingface_hub
 import numpy as np
 import torch
 
 from diffusion.utils.logger import get_root_logger
 from tools.download import find_model
+from dotenv import load_dotenv
+from pathlib import Path
+
+# Go up three levels: utils -> diffusion -> Sana-fork (project root)
+load_dotenv(Path(__file__).parent.parent.parent / '.env')
 
 
 def save_checkpoint(
@@ -36,45 +41,77 @@ def save_checkpoint(
     keep_last=False,
     step=None,
     add_symlink=False,
+    upload_to_hub=True,
 ):
-    os.makedirs(work_dir, exist_ok=True)
-    state_dict = dict(state_dict=model.state_dict())
-    if model_ema is not None:
-        state_dict["state_dict_ema"] = model_ema.state_dict()
-    if optimizer is not None:
-        state_dict["optimizer"] = optimizer.state_dict()
-    if lr_scheduler is not None:
-        state_dict["scheduler"] = lr_scheduler.state_dict()
-    if epoch is not None:
-        state_dict["epoch"] = epoch
-        file_path = os.path.join(work_dir, f"epoch_{epoch}.pth")
-        if step is not None:
-            file_path = file_path.split(".pth")[0] + f"_step_{step}.pth"
-
-    rng_state = {
-        "torch": torch.get_rng_state(),
-        "torch_cuda": torch.cuda.get_rng_state_all(),
-        "numpy": np.random.get_state(),
-        "python": random.getstate(),
-        "generator": generator.get_state(),
-    }
-    state_dict["rng_state"] = rng_state
-
     logger = get_root_logger()
-    torch.save(state_dict, file_path)
-    logger.info(f"Saved checkpoint of epoch {epoch} to {file_path.format(epoch)}.")
-    if keep_last:
-        for i in range(epoch):
-            previous_ckgt = file_path.format(i)
-            if os.path.exists(previous_ckgt):
-                os.remove(previous_ckgt)
-    if add_symlink:
-        link_path = os.path.join(os.path.dirname(file_path), "latest.pth")
-        if os.path.exists(link_path) or os.path.islink(link_path):
-            os.remove(link_path)
-        os.symlink(os.path.abspath(file_path), link_path)
+    try:
+        os.makedirs(work_dir, exist_ok=True)
+        state_dict = dict(state_dict=model.state_dict())
+        if model_ema is not None:
+            state_dict["state_dict_ema"] = model_ema.state_dict()
+        if optimizer is not None:
+            state_dict["optimizer"] = optimizer.state_dict()
+        if lr_scheduler is not None:
+            state_dict["scheduler"] = lr_scheduler.state_dict()
+        if epoch is not None:
+            state_dict["epoch"] = epoch
+            file_path = os.path.join(work_dir, f"epoch_{epoch}.pth")
+            if step is not None:
+                file_path = file_path.split(".pth")[0] + f"_step_{step}.pth"
 
-    return file_path
+        rng_state = {
+            "torch": torch.get_rng_state(),
+            "torch_cuda": torch.cuda.get_rng_state_all(),
+            "numpy": np.random.get_state(),
+            "python": random.getstate(),
+            "generator": generator.get_state(),
+        }
+        state_dict["rng_state"] = rng_state
+
+        torch.save(state_dict, file_path)
+        logger.info(f"Saved checkpoint of epoch {epoch} to {file_path}.")
+
+        if keep_last:
+            for i in range(epoch):
+                previous_ckgt = file_path.format(i)
+                if os.path.exists(previous_ckgt):
+                    os.remove(previous_ckgt)
+        if add_symlink:
+            link_path = os.path.join(os.path.dirname(file_path), "latest.pth")
+            if os.path.exists(link_path) or os.path.islink(link_path):
+                os.remove(link_path)
+            os.symlink(os.path.abspath(file_path), link_path)
+
+        # Upload to HuggingFace if requested
+        if upload_to_hub and "HF_TOKEN" in os.environ:
+            try:
+                huggingface_hub.login(token=os.environ["HF_TOKEN"])
+                repo_id = "Tahahah/pacman-sana-3.2m"
+                
+                try:
+                    huggingface_hub.upload_file(
+                        path_or_fileobj=file_path,
+                        path_in_repo=f"checkpoints/{os.path.basename(file_path)}",
+                        repo_id=repo_id,
+                        repo_type="model"
+                    )
+                    logger.info(f"Uploaded checkpoint to HuggingFace: {repo_id}")
+                except huggingface_hub.utils.RepositoryNotFoundError:
+                    huggingface_hub.create_repo(repo_id, repo_type="model")
+                    huggingface_hub.upload_file(
+                        path_or_fileobj=file_path,
+                        path_in_repo=f"checkpoints/{os.path.basename(file_path)}",
+                        repo_id=repo_id,
+                        repo_type="model"
+                    )
+                    logger.info(f"Created repo and uploaded checkpoint to HuggingFace: {repo_id}")
+            except Exception as e:
+                logger.warning(f"Failed to upload checkpoint to HuggingFace: {e}")
+
+        return file_path
+    except Exception as e:
+        logger.error(f"Failed to save checkpoint: {e}")
+        return None
 
 
 def load_checkpoint(
@@ -88,43 +125,63 @@ def load_checkpoint(
     resume_lr_scheduler=True,
     null_embed_path=None,
 ):
-    assert isinstance(checkpoint, str)
     logger = get_root_logger()
-    ckpt_file = checkpoint
-    checkpoint = find_model(ckpt_file)
+    try:
+        assert isinstance(checkpoint, str)
+        ckpt_file = checkpoint
+        checkpoint = find_model(ckpt_file)
 
-    state_dict_keys = ["pos_embed", "base_model.pos_embed", "model.pos_embed"]
-    for key in state_dict_keys:
-        if key in checkpoint["state_dict"]:
-            del checkpoint["state_dict"][key]
-            if "state_dict_ema" in checkpoint and key in checkpoint["state_dict_ema"]:
-                del checkpoint["state_dict_ema"][key]
-            break
+        state_dict_keys = ["pos_embed", "base_model.pos_embed", "model.pos_embed"]
+        for key in state_dict_keys:
+            if key in checkpoint["state_dict"]:
+                del checkpoint["state_dict"][key]
+                if "state_dict_ema" in checkpoint and key in checkpoint["state_dict_ema"]:
+                    del checkpoint["state_dict_ema"][key]
+                break
 
-    if load_ema:
-        state_dict = checkpoint["state_dict_ema"]
-    else:
-        state_dict = checkpoint.get("state_dict", checkpoint)  # to be compatible with the official checkpoint
+        if load_ema:
+            state_dict = checkpoint["state_dict_ema"]
+        else:
+            state_dict = checkpoint.get("state_dict", checkpoint)
 
-    null_embed = torch.load(null_embed_path, map_location="cpu")
-    state_dict["y_embedder.y_embedding"] = null_embed["uncond_prompt_embeds"][0]
-    rng_state = checkpoint.get("rng_state", None)
+        # Try to load null_embed from local path or HuggingFace
+        try:
+            null_embed = torch.load(null_embed_path, map_location="cpu")
+        except FileNotFoundError:
+            try:
+                if "HF_TOKEN" in os.environ:
+                    huggingface_hub.login(token=os.environ["HF_TOKEN"])
+                    null_embed_file = huggingface_hub.hf_hub_download(
+                        repo_id="Tahahah/pacman-sana-3.2m",
+                        filename="pretrained_models/null_embed_diffusers_dc-ae_16.pth",
+                        repo_type="model"
+                    )
+                    null_embed = torch.load(null_embed_file, map_location="cpu")
+                    logger.info("Loaded null_embed from HuggingFace")
+                else:
+                    raise FileNotFoundError("HF_TOKEN not found in environment")
+            except Exception as e:
+                logger.warning(f"Could not load null_embed from HuggingFace: {e}")
+                logger.warning("Proceeding without null_embed")
+                null_embed = None
 
-    missing, unexpect = model.load_state_dict(state_dict, strict=False)
-    if model_ema is not None:
-        model_ema.load_state_dict(checkpoint["state_dict_ema"], strict=False)
-    if optimizer is not None and resume_optimizer:
-        optimizer.load_state_dict(checkpoint["optimizer"])
-    if lr_scheduler is not None and resume_lr_scheduler:
-        lr_scheduler.load_state_dict(checkpoint["scheduler"])
+        if null_embed is not None:
+            state_dict["y_embedder.y_embedding"] = null_embed["uncond_prompt_embeds"][0]
+        
+        rng_state = checkpoint.get("rng_state", None)
 
-    epoch = 0
-    if optimizer is not None:
-        epoch = checkpoint.get("epoch", re.match(r".*epoch_(\d*).*.pth", ckpt_file).group()[0])
-        logger.info(
-            f"Resume checkpoint of epoch {epoch} from {ckpt_file}. Load ema: {load_ema}, "
-            f"resume optimizer： {resume_optimizer}, resume lr scheduler: {resume_lr_scheduler}."
-        )
+        missing, unexpect = model.load_state_dict(state_dict, strict=False)
+        if model_ema is not None:
+            model_ema.load_state_dict(checkpoint["state_dict_ema"], strict=False)
+        if optimizer is not None and resume_optimizer:
+            optimizer.load_state_dict(checkpoint["optimizer"])
+        if lr_scheduler is not None and resume_lr_scheduler:
+            lr_scheduler.load_state_dict(checkpoint["scheduler"])
+
+        epoch = checkpoint.get("epoch", 0)
+        logger.info(f"Successfully loaded checkpoint from {ckpt_file}")
         return epoch, missing, unexpect, rng_state
-    logger.info(f"Load checkpoint from {ckpt_file}. Load ema: {load_ema}.")
-    return epoch, missing, unexpect, rng_state
+
+    except Exception as e:
+        logger.error(f"Failed to load checkpoint: {e}")
+        return 0, [], [], None
