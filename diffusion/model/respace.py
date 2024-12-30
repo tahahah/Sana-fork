@@ -149,7 +149,7 @@ class SpacedDiffusion(GaussianDiffusion):
     def _wrap_model(self, model):
         if isinstance(model, _WrappedModel):
             return model
-        return _WrappedModel(model, self.timestep_map, self.original_num_steps)
+        return _WrappedModel(model, self.timestep_map, self.use_timesteps)
 
     def _scale_timesteps(self, t):
         # Scaling is done by the wrapped model.
@@ -157,15 +157,35 @@ class SpacedDiffusion(GaussianDiffusion):
 
 
 class _WrappedModel:
-    def __init__(self, model, timestep_map, original_num_steps):
+    def __init__(self, model, timestep_map, use_timesteps):
         self.model = model
         self.timestep_map = timestep_map
-        # self.rescale_timesteps = rescale_timesteps
-        self.original_num_steps = original_num_steps
+        self.use_timesteps = use_timesteps
+        
+        # Handle DistributedDataParallel wrapper
+        if hasattr(model, 'module'):
+            base_model = model.module
+        else:
+            base_model = model
+            
+        
+        # Try to find VAE in the base model
+        self.vae = None
+        if hasattr(base_model, 'vae'):
+            self.vae = base_model.vae
+        elif hasattr(base_model, 'sana') and hasattr(base_model.sana, 'vae'):
+            self.vae = base_model.sana.vae
+            
 
     def __call__(self, x, timestep, **kwargs):
-        map_tensor = th.tensor(self.timestep_map, device=timestep.device, dtype=timestep.dtype)
-        new_ts = map_tensor[timestep]
-        # if self.rescale_timesteps:
-        #     new_ts = new_ts.float() * (1000.0 / self.original_num_steps)
-        return self.model(x, timestep=new_ts, **kwargs)
+        """
+        :param x: An [N x C x ...] Tensor of inputs.
+        :param timestep: A 1-D batch of timesteps.
+        :return: An [N x C x ...] Tensor of outputs.
+        """
+        # Map from original diffusion steps to compressed diffusion steps
+        if isinstance(self.timestep_map, (np.ndarray, list)):
+            timestep = np.array([self.timestep_map[t] for t in timestep.cpu()])
+            timestep = th.from_numpy(timestep).to(x.device)
+        
+        return self.model(x, timestep, **kwargs)

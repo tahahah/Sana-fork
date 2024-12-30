@@ -95,16 +95,32 @@ class PacmanDiffusionModel(nn.Module):
         combined = torch.cat([x, obs], dim=1)
         return self.history_encoder(combined)
     
-    def forward_with_dpmsolver(self, x, timestep, y, data_info, obs=None, **kwargs):
+    def forward_with_dpmsolver(self, x, timestep, y, data_info, obs=None, return_latents=False, **kwargs):
         """
-        dpm solver donnot need variance prediction
-        """
-        # https://github.com/openai/glide-text2im/blob/main/notebooks/text2im.ipynb
+        DPM solver doesn't need variance prediction.
         
-        model_out = self.forward(x, timestep, y, data_info=data_info, obs=obs, **kwargs)
-        return model_out.chunk(2, dim=1)[0] if self.sana.pred_sigma else model_out
+        Args:
+            x: Input tensor [B, C, H, W]
+            timestep: Diffusion timesteps
+            y: Conditioning tensor
+            data_info: Data info dictionary
+            obs: Observation tensor
+            return_latents: If True, return output in latent space. Default: False
+            **kwargs: Additional arguments
+            
+        Returns:
+            Model output, either in latent or pixel space based on return_latents
+        """
+        model_out = self.forward(x, timestep, y, data_info=data_info, obs=obs, return_latents=return_latents, **kwargs)
+        
+        # If in latent space or no sigma prediction needed, return as is
+        if return_latents or not self.sana.pred_sigma:
+            return model_out
+            
+        # Otherwise chunk the pixel space output
+        return model_out.chunk(2, dim=1)[0]
 
-    def forward(self, x, timestep, y, mask=None, data_info=None, obs=None, **kwargs):
+    def forward(self, x, timestep, y, mask=None, data_info=None, obs=None, return_latents=False, **kwargs):
         """
         Forward pass through both history encoder and Sana model.
         
@@ -115,16 +131,31 @@ class PacmanDiffusionModel(nn.Module):
             mask: Optional attention mask 
             data_info: Optional data info dict
             obs: Tensor of shape [batch_size, 3*(seq_length-1), height, width] - Raw observation frames
+            return_latents: If True, return output in latent space before VAE decoding. Default: False
             **kwargs: Additional arguments
+            
         Returns:
-            Model output in pixel space
+            If return_latents=False: Model output in pixel space [batch_size, 3, height, width]
+            If return_latents=True: Model output in latent space [batch_size, latent_dim, latent_height, latent_width]
+        
+        Raises:
+            ValueError: If obs is None or VAE model is not provided
+            RuntimeError: If tensor shapes are incompatible
         """
+        # Input validation
         if obs is None:
             raise ValueError("obs must be provided for history encoding")
+        if self.vae is None:
+            raise ValueError("VAE model must be provided")
+            
+        # Shape validation
+        if x.dim() != 4 or obs.dim() != 4:
+            raise RuntimeError(f"Expected 4D tensors, got x: {x.dim()}D, obs: {obs.dim()}D")
+        if x.size(0) != obs.size(0):
+            raise RuntimeError(f"Batch size mismatch: x: {x.size(0)}, obs: {obs.size(0)}")
+        if x.size(2) != obs.size(2) or x.size(3) != obs.size(3):
+            raise RuntimeError(f"Spatial dimensions mismatch: x: {x.size()[2:]}, obs: {obs.size()[2:]}")
         
-        
-        # print(f"- x shape: {x.shape}")
-        # print(f"- obs shape: {obs.shape}")
         # 1. Concatenate noisy frame with observation frames in pixel space
         concat_input = torch.cat([obs, x], dim=1)  # [b, 3*seq_length, h, w]
         
@@ -132,14 +163,17 @@ class PacmanDiffusionModel(nn.Module):
         processed = self.history_encoder(concat_input)  # [b, 3, h, w]
         
         # 3. Encode through VAE to get latents, allowing gradients to flow
-        if self.vae is not None:
-            with torch.set_grad_enabled(True):  # Ensure gradients flow through VAE
-                encoded = self.vae.encode(processed)
-                latent_output = self.sana(encoded, timestep, y, mask=mask, data_info=data_info, **kwargs)
-                pixel_output = self.vae.decode(latent_output)
+        with torch.set_grad_enabled(True):  # Ensure gradients flow through VAE
+            encoded = self.vae.encode(processed)
+            latent_output = self.sana(encoded, timestep, y, mask=mask, data_info=data_info, **kwargs)
+            
+            # Return latent output if requested
+            if return_latents:
+                return latent_output
+                
+            # Otherwise decode back to pixel space
+            pixel_output = self.vae.decode(latent_output)
             return pixel_output
-        else:
-            raise ValueError("VAE model must be provided")
 
 
 # @MODELS.register_module()

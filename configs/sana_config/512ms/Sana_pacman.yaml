@@ -61,9 +61,10 @@ scheduler:
 train:
   num_workers: 1
   seed: 1
-  train_batch_size: 2
+  train_batch_size: 1
   num_epochs: 100
-  gradient_accumulation_steps: 1
+  gradient_accumulation_steps: 2
+  compute_loss_in_latents: true
   grad_checkpointing: true
   gradient_clip: 0.1
   optimizer:

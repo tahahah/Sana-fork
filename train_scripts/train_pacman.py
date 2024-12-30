@@ -53,6 +53,7 @@ from diffusion.utils.logger import LogBuffer, get_root_logger
 from diffusion.utils.lr_scheduler import build_lr_scheduler
 from diffusion.utils.misc import DebugUnderflowOverflow, init_random_seed, read_config, set_random_seed
 from diffusion.utils.optimizer import auto_scale_lr, build_optimizer
+from pathlib import Path
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
@@ -63,6 +64,8 @@ def set_fsdp_env():
     os.environ["FSDP_BACKWARD_PREFETCH"] = "BACKWARD_PRE"
     os.environ["FSDP_TRANSFORMER_CLS_TO_WRAP"] = "SanaBlock"
 
+def get_dir_size(folder: str) -> int:
+    return sum(p.stat().st_size for p in Path(folder).rglob('*'))
 
 @torch.inference_mode()
 def log_validation(accelerator, config, model, logger, step, device, vae=None, init_noise=None):
@@ -146,19 +149,22 @@ def log_validation(accelerator, config, model, logger, step, device, vae=None, i
         
         # Generate initial noise if not provided
         z = init_z if init_z is not None else torch.randn_like(img)
-        # encoded z = torch.randn([1, vae.cfg.latent_channels, img.shape[-2]//vae.cfg.latent_channels, img.shape[-1]//vae.cfg.latent_channels], device=device)
         print(f"Debug - initial z shape: {z.shape}")
+
+        # Get loss computation space from config
+        compute_in_latents = getattr(config.train, "compute_loss_in_latents", True)
         
         # Base model kwargs for the shape info and observations
         model_kwargs = dict(
             data_info={"img_hw": hw, "aspect_ratio": ar},
             mask=None,  # Use mask directly from dataset
             obs=obs,  # Pass observations to be concatenated with noise in the model
+            return_latents=False
         )
 
         if sampler == "dpm-solver":
             dpm_solver = DPMS(
-                model.sana.forward_with_dpmsolver,
+                model.sana.forward_with_dpmsolver if not compute_in_latents else model.forward_with_dpmsolver,
                 condition=actions,  # Use actions as condition
                 uncondition=null_action,  # Use null action as uncondition
                 cfg_scale=4.5,  # Same scale as original code
@@ -168,11 +174,12 @@ def log_validation(accelerator, config, model, logger, step, device, vae=None, i
             )
             denoised = dpm_solver.sample(
                 z,
-                steps=40,
+                steps=20,
                 order=2,
                 skip_type="time_uniform_flow",
                 method="multistep",
                 flow_shift=config.scheduler.flow_shift,
+                return_latents=compute_in_latents
             )
             print(f"Debug - denoised shape after dpm_solver: {denoised.shape if denoised is not None else None}")
         elif sampler == "flow_euler":
@@ -185,7 +192,8 @@ def log_validation(accelerator, config, model, logger, step, device, vae=None, i
             )
             denoised = flow_solver.sample(
                 z,
-                steps=28
+                steps=28,
+                return_latents=compute_in_latents
             )
             print(f"Debug - denoised shape after flow_euler: {denoised.shape if denoised is not None else None}")
         elif sampler == "flow_dpm-solver":
@@ -200,16 +208,19 @@ def log_validation(accelerator, config, model, logger, step, device, vae=None, i
             )
             denoised = dpm_solver.sample(
                 z,
-                steps=40,
+                steps=20,
                 order=2,
                 skip_type="time_uniform_flow",
                 method="multistep",
                 flow_shift=config.scheduler.flow_shift,
             )
-            print(f"Debug - denoised shape after dpm_solver: {denoised.shape if denoised is not None else None}")
+            print(f"Debug - denoised shape after flow_dpm-solver: {denoised.shape if denoised is not None else None}")
         else:
-            raise ValueError(f"{sampler} not implemented")
+            raise ValueError(f"Unknown sampler: {sampler}")
 
+        latents = []
+        current_image_logs = []
+        
         latents.append(denoised)
         
         torch.cuda.empty_cache()
@@ -323,6 +334,21 @@ def log_validation(accelerator, config, model, logger, step, device, vae=None, i
 
 
 def train(config, args, accelerator, model, optimizer, lr_scheduler, train_dataloader, train_diffusion, logger, vae=None):
+    """
+    Main training loop.
+    
+    Args:
+        config: Training configuration
+        args: Command line arguments
+        accelerator: Accelerator for distributed training
+        model: The model to train
+        optimizer: Optimizer
+        lr_scheduler: Learning rate scheduler
+        train_dataloader: Training data loader
+        train_diffusion: Diffusion model for training
+        logger: Logger instance
+        vae: Optional VAE model
+    """
     if getattr(config.train, "debug_nan", False):
         DebugUnderflowOverflow(model)
         logger.info("NaN debugger registered. Start to detect overflow during training.")
@@ -333,6 +359,11 @@ def train(config, args, accelerator, model, optimizer, lr_scheduler, train_datal
     skip_step = skip_step if skip_step < (train_dataloader_len - 20) else 0
     loss_nan_timer = 0
     logger.info("Start training...")
+    
+    # Get loss computation space from config
+    compute_in_latents = getattr(config.train, "compute_loss_in_latents", True)
+    logger.info(f"Computing loss in {'latent' if compute_in_latents else 'pixel'} space")
+    
     # Cache Dataset for BatchSampler
     if args.caching and config.model.multi_scale:
         caching_start = time.time()
@@ -411,11 +442,31 @@ def train(config, args, accelerator, model, optimizer, lr_scheduler, train_datal
             with accelerator.accumulate(model):
                 # Predict the noise residual
                 optimizer.zero_grad()
+                
+                # Set up model kwargs with proper configuration
+                model_kwargs = dict(
+                    y=y, 
+                    mask=y_mask, 
+                    data_info=data_info, 
+                    obs=obs,
+                )
+                
+                # Compute loss with specified computation space
                 loss_term = train_diffusion.training_losses(
-                    model, clean_images, torch.randint(0, config.scheduler.train_sampling_steps, (clean_images.shape[0],), device=clean_images.device).long(), 
-                    model_kwargs=dict(y=y, mask=y_mask, data_info=data_info, obs=obs)
-            )
+                    model=model,
+                    x_start=clean_images,
+                    timestep=torch.randint(
+                        0, 
+                        config.scheduler.train_sampling_steps, 
+                        (clean_images.shape[0],), 
+                        device=clean_images.device
+                    ).long(),
+                    model_kwargs=model_kwargs,
+                    compute_in_latents=compute_in_latents
+                )
+                
                 loss = loss_term["loss"].mean()
+                
             accelerator.backward(loss)
             if accelerator.sync_gradients:
                 grad_norm = accelerator.clip_grad_norm_(model.parameters(), config.train.gradient_clip)
@@ -427,10 +478,26 @@ def train(config, args, accelerator, model, optimizer, lr_scheduler, train_datal
             if torch.any(torch.isnan(loss)):
                 loss_nan_timer += 1
             lr = lr_scheduler.get_last_lr()[0]
-            logs = {args.loss_report_name: accelerator.gather(loss).mean().item()}
+            
+            # Log both total loss and component losses if available
+            logs = {
+                args.loss_report_name: accelerator.gather(loss).mean().item(),
+                'loss/total': accelerator.gather(loss).mean().item(),
+            }
+            
+            # Log component losses if available
+            if "mse" in loss_term:
+                logs['loss/mse'] = accelerator.gather(loss_term["mse"].mean()).mean().item()
+            if "vb" in loss_term:
+                logs['loss/vb'] = accelerator.gather(loss_term["vb"].mean()).mean().item()
+            if "mae" in loss_term:
+                logs['loss/mae'] = accelerator.gather(loss_term["mae"].mean()).mean().item()
+                
             if grad_norm is not None:
                 logs.update(grad_norm=accelerator.gather(grad_norm).mean().item())
+                
             log_buffer.update(logs)
+            
             if (step + 1) % config.train.log_interval == 0 or (step + 1) == 1:
                 accelerator.wait_for_everyone()
                 t = (time.time() - last_tic) / config.train.log_interval
@@ -454,7 +521,7 @@ def train(config, args, accelerator, model, optimizer, lr_scheduler, train_datal
                 info = (
                     f"Epoch: {epoch} | Global Step: {global_step} | Local Step: {current_step} // {train_dataloader_len}, "
                     f"total_eta: {eta}, epoch_eta:{eta_epoch}, time: all:{t:.3f}, model:{t_m:.3f}, data:{t_d:.3f}, vae:{t_v:.3f}, "
-                    f"lr:{lr:.3e}, "
+                    f"lr:{lr:.3e}, space:{'latent' if compute_in_latents else 'pixel'}, "
                 )
                 info += (
                     f"s:({model.module.sana.h}, {model.module.sana.w}), "
@@ -479,12 +546,16 @@ def train(config, args, accelerator, model, optimizer, lr_scheduler, train_datal
 
             if loss_nan_timer > 20:
                 raise ValueError("Loss is NaN too much times. Break here.")
-            if global_step % config.train.save_model_steps == 0: # or (time.time() - training_start_time) / 3600 > 3.8:
+            if global_step % config.train.save_model_steps == 0:
                 accelerator.wait_for_everyone()
                 if accelerator.is_main_process:
                     os.umask(0o000)
+                    save_dir = osp.join(config.work_dir, "checkpoints")
+                    if get_dir_size(save_dir) > 5 * 1024 * 1024 * 1024:  # 5GB in bytes
+                        logger.info("Checkpoint directory size exceeded 5GB. Stopping training.")
+                        return
                     ckpt_saved_path = save_checkpoint(
-                        osp.join(config.work_dir, "checkpoints"),
+                        save_dir,
                         epoch=epoch,
                         step=global_step,
                         model=accelerator.unwrap_model(model),
@@ -672,6 +743,7 @@ def main(cfg: SanaConfig) -> None:
         snr=config.train.snr_loss,
         flow_shift=config.scheduler.flow_shift,
     )
+
     predict_info = f"v-prediction: {config.scheduler.predict_v}, noise schedule: {config.scheduler.noise_schedule}"
     if "flow" in config.scheduler.noise_schedule:
         predict_info += f", flow shift: {config.scheduler.flow_shift}"

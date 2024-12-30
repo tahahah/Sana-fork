@@ -136,6 +136,7 @@ class TrainingConfig(BaseConfig):
     num_epochs: int = 100
     gradient_accumulation_steps: int = 1
     grad_checkpointing: bool = False
+    compute_loss_in_latents: bool = True
     gradient_clip: float = 1.0
     gc_step: int = 1
     optimizer: Dict[str, Any] = field(

@@ -312,8 +312,8 @@ class GaussianDiffusion:
         the initial x, x_0.
         :param model: the model, which takes a signal and a batch of timesteps
                       as input.
-        :param x: the [N x C x ...] tensor at time t.
-        :param t: a 1-D Tensor of timesteps.
+        :param x: the [N x C x ...] tensor of inputs.
+        :param t: the value of t, starting at 0 for the first diffusion step.
         :param clip_denoised: if True, clip the denoised signal into [-1, 1].
         :param denoised_fn: if not None, a function which applies to the
             x_start prediction before it is used to sample. Applies before
@@ -329,8 +329,8 @@ class GaussianDiffusion:
         if model_kwargs is None:
             model_kwargs = {}
 
-        B, C = x.shape[:2]
-        assert t.shape == (B,)
+        
+
         model_output = model(x, t, **model_kwargs)
         if isinstance(model_output, tuple):
             model_output, extra = model_output
@@ -338,8 +338,8 @@ class GaussianDiffusion:
             extra = None
 
         if self.model_var_type in [ModelVarType.LEARNED, ModelVarType.LEARNED_RANGE]:
-            assert model_output.shape == (B, C * 2, *x.shape[2:])
-            model_output, model_var_values = th.split(model_output, C, dim=1)
+            assert model_output.shape == (x.shape[0], x.shape[1] * 2, *x.shape[2:])
+            model_output, model_var_values = th.split(model_output, x.shape[1], dim=1)
             min_log = _extract_into_tensor(self.posterior_log_variance_clipped, t, x.shape)
             max_log = _extract_into_tensor(np.log(self.betas), t, x.shape)
             # The model_var_values is [-1, 1] for [min_var, max_var].
@@ -446,7 +446,8 @@ class GaussianDiffusion:
         :param t: the value of t, starting at 0 for the first diffusion step.
         :param clip_denoised: if True, clip the x_start prediction to [-1, 1].
         :param denoised_fn: if not None, a function which applies to the
-            x_start prediction before it is used to sample.
+            x_start prediction before it is used to sample. Applies before
+            clip_denoised.
         :param cond_fn: if not None, this is a gradient function that acts
                         similarly to the model.
         :param model_kwargs: if not None, a dict of extra keyword arguments to
@@ -723,59 +724,91 @@ class GaussianDiffusion:
                 yield out
                 img = out["sample"]
 
-    def _vb_terms_bpd(self, model, x_start, x_t, t, clip_denoised=True, model_kwargs=None):
-        """
-        Get a term for the variational lower-bound.
-        The resulting units are bits (rather than nats, as one might expect).
-        This allows for comparison to other papers.
-        :return: a dict with the following keys:
-                 - 'output': a shape [N] tensor of NLLs or KLs.
-                 - 'pred_xstart': the x_0 predictions.
-        """
-        true_mean, _, true_log_variance_clipped = self.q_posterior_mean_variance(x_start=x_start, x_t=x_t, t=t)
-        out = self.p_mean_variance(model, x_t, t, clip_denoised=clip_denoised, model_kwargs=model_kwargs)
-        kl = normal_kl(true_mean, true_log_variance_clipped, out["mean"], out["log_variance"])
-        kl = mean_flat(kl) / np.log(2.0)
-
-        decoder_nll = -discretized_gaussian_log_likelihood(
-            x_start, means=out["mean"], log_scales=0.5 * out["log_variance"]
-        )
-        assert decoder_nll.shape == x_start.shape
-        decoder_nll = mean_flat(decoder_nll) / np.log(2.0)
-
-        # At the first timestep return the decoder NLL,
-        # otherwise return KL(q(x_{t-1}|x_t,x_0) || p(x_{t-1}|x_t))
-        output = th.where((t == 0), decoder_nll, kl)
-        return {"output": output, "pred_xstart": out["pred_xstart"]}
-
-    def training_losses(self, model, x_start, timestep, model_kwargs=None, noise=None, skip_noise=False):
+    def training_losses(self, model, x_start, timestep, model_kwargs=None, noise=None, skip_noise=False, compute_in_latents=False):
         """
         Compute training losses for a single timestep.
-        :param model: the model to evaluate loss on.
-        :param x_start: the [N x C x ...] tensor of inputs.
-        :param t: a batch of timestep indices.
-        :param model_kwargs: if not None, a dict of extra keyword arguments to
-            pass to the model. This can be used for conditioning.
-        :param noise: if specified, the specific Gaussian noise to try to remove.
-        :return: a dict with the key "loss" containing a tensor of shape [N].
-                 Some mean or variance settings may also have other keys.
+        
+        Args:
+            model: the model to evaluate loss on.
+            x_start: the [N x C x ...] tensor of inputs in pixel space.
+            timestep: a batch of timestep indices.
+            model_kwargs: if not None, a dict of extra keyword arguments to
+                pass to the model. This can be used for conditioning.
+            noise: if specified, the specific Gaussian noise to try to remove.
+            skip_noise: if True, skip adding noise to x_start.
+            compute_in_latents: if True, compute loss in latent space. Default: False.
+            
+        Returns:
+            a dict with the key "loss" containing a tensor of shape [N].
+            Some mean or variance settings may also have other keys.
         """
         t = timestep
         if model_kwargs is None:
             model_kwargs = {}
-        if skip_noise:
-            x_t = x_start
+            
+        
+            
+        # Handle latent space computation first if needed
+        if compute_in_latents:
+            model_kwargs["return_latents"] = True
+            
+            # Get VAE for loss computation only
+            vae = None
+            if hasattr(model, 'module'):
+                base_model = model.module
+            else:
+                base_model = model
+                
+            if hasattr(base_model, 'vae'):
+                vae = base_model.vae
+            elif hasattr(base_model, 'sana') and hasattr(base_model.sana, 'vae'):
+                vae = base_model.sana.vae
+            
+            # Generate x_t in pixel space first
+            if skip_noise:
+                x_t = x_start
+            else:
+                noise = th.randn_like(x_start) if noise is None else noise
+                x_t = self.q_sample(x_start, t, noise=noise)
+            
+            # Get model output (should be in latent space due to return_latents=True)
+            model_output = model(x_t, t, **model_kwargs)
+            
+            if isinstance(model_output, dict) and model_output.get("x", None) is not None:
+                output = model_output["x"]
+            else:
+                output = model_output
+                
+            # For loss computation, encode x_start to latent space
+            if vae is not None:
+                with th.set_grad_enabled(True):
+                    x_start_latent = vae.encode(x_start)
+            else:
+                raise ValueError("VAE not found but compute_in_latents=True")
         else:
-            if noise is None:
-                noise = th.randn_like(x_start)
-            x_t = self.q_sample(x_start, t, noise=noise)
-
+            # Original pixel space computation
+            if skip_noise:
+                x_t = x_start
+            else:
+                if noise is None:
+                    noise = th.randn_like(x_start)
+                x_t = self.q_sample(x_start, t, noise=noise)
+            
+            model_output = model(x_t, t, **model_kwargs)
+            
+            if isinstance(model_output, dict) and model_output.get("x", None) is not None:
+                output = model_output["x"]
+            else:
+                output = model_output
+                
+            x_start_latent = x_start
+            
         terms = {}
 
         if self.loss_type == LossType.KL or self.loss_type == LossType.RESCALED_KL:
             terms["loss"] = self._vb_terms_bpd(
                 model=model,
-                x_start=x_start,
+                x_start=x_start_latent,
                 x_t=x_t,
                 t=t,
                 clip_denoised=False,
@@ -784,12 +817,6 @@ class GaussianDiffusion:
             if self.loss_type == LossType.RESCALED_KL:
                 terms["loss"] *= self.num_timesteps
         elif self.loss_type == LossType.MSE or self.loss_type == LossType.RESCALED_MSE:
-            model_output = model(x_t, t, **model_kwargs)
-            if isinstance(model_output, dict) and model_output.get("x", None) is not None:
-                output = model_output["x"]
-            else:
-                output = model_output
-
             if self.return_startx and self.model_mean_type == ModelMeanType.EPSILON:
                 B, C = x_t.shape[:2]
                 assert output.shape == (B, C * 2, *x_t.shape[2:])
@@ -807,7 +834,7 @@ class GaussianDiffusion:
                 frozen_out = th.cat([output.detach(), model_var_values], dim=1)
                 terms["vb"] = self._vb_terms_bpd(
                     model=lambda *args, r=frozen_out, **kwargs: r,
-                    x_start=x_start,
+                    x_start=x_start_latent,
                     x_t=x_t,
                     t=t,
                     clip_denoised=False,
@@ -818,12 +845,20 @@ class GaussianDiffusion:
                     terms["vb"] *= self.num_timesteps / 1000.0
 
             target = {
-                ModelMeanType.PREVIOUS_X: self.q_posterior_mean_variance(x_start=x_start, x_t=x_t, t=t)[0],
-                ModelMeanType.START_X: x_start,
-                ModelMeanType.EPSILON: noise,
-                ModelMeanType.VELOCITY: noise - x_start,
+                ModelMeanType.PREVIOUS_X: vae.encode(self.q_posterior_mean_variance(x_start=x_start.to(th.float16), x_t=x_t.to(th.float16), t=t)[0].to(th.float16)) if compute_in_latents else self.q_posterior_mean_variance(x_start=x_start, x_t=x_t, t=t)[0],
+                ModelMeanType.START_X: x_start_latent if compute_in_latents else x_start,
+                ModelMeanType.EPSILON: th.randn_like(x_start_latent) if compute_in_latents else noise,
+                ModelMeanType.VELOCITY: (th.randn_like(x_start_latent) - x_start_latent) if compute_in_latents else (noise - x_start)
             }[self.model_mean_type]
-            assert output.shape == target.shape == x_start.shape
+            
+            # Shape validation
+            if compute_in_latents:
+                assert output.shape == target.shape == x_start_latent.shape, \
+                    f"Shape mismatch in latent space: output {output.shape}, target {target.shape}, x_start_latent {x_start_latent.shape}"
+            else:
+                assert output.shape == target.shape == x_start.shape, \
+                    f"Shape mismatch in pixel space: output {output.shape}, target {target.shape}, x_start {x_start.shape}"
+            
             if self.snr:
                 if self.model_mean_type == ModelMeanType.START_X:
                     pred_noise = self._predict_eps_from_xstart(x_t=x_t, t=t, pred_xstart=output)
@@ -836,9 +871,11 @@ class GaussianDiffusion:
 
                 t = t[:, None, None, None].expand(pred_startx.shape)  # [128, 4, 32, 32]
                 # best
-                target = th.where(t > 249, noise, x_start)
+                target = th.where(t > 249, noise, x_start_latent)
                 output = th.where(t > 249, pred_noise, pred_startx)
+                
             loss = (target - output) ** 2
+            
             if model_kwargs.get("mask_ratio", False) and model_kwargs["mask_ratio"] > 0:
                 assert "mask" in model_output
                 loss = F.avg_pool2d(loss.mean(dim=1), model.model.module.patch_size).flatten(1)
@@ -849,6 +886,7 @@ class GaussianDiffusion:
                     terms["mae"] = model_kwargs["mask_loss_coef"] * mean_flat(loss * mask) * mask.shape[1] / mask.sum(1)
             else:
                 terms["mse"] = mean_flat(loss)
+                
             if "vb" in terms:
                 terms["loss"] = terms["mse"] + terms["vb"]
             else:
@@ -945,6 +983,7 @@ class GaussianDiffusion:
                 # best
                 target = th.where(t > 249, noise, x_start)
                 output = th.where(t > 249, pred_noise, pred_startx)
+                
             loss = (target - output) ** 2
             terms["mse"] = mean_flat(loss)
             if "vb" in terms:
@@ -958,19 +997,52 @@ class GaussianDiffusion:
 
         return terms
 
-    def _prior_bpd(self, x_start):
+    def _vb_terms_bpd(self, model, x_start, x_t, t, clip_denoised=True, model_kwargs=None):
         """
-        Get the prior KL term for the variational lower-bound, measured in
-        bits-per-dim.
-        This term can't be optimized, as it only depends on the encoder.
-        :param x_start: the [N x C x ...] tensor of inputs.
-        :return: a batch of [N] KL values (in bits), one per batch element.
+        Get a term for the variational lower-bound.
+        The resulting units are bits (rather than nats, as one might expect).
+        This allows for comparison to other papers.
+        
+        Args:
+            model: the model to evaluate loss on
+            x_start: the [N x C x ...] tensor of inputs, either in pixel or latent space
+            x_t: the [N x C x ...] tensor of noisy inputs
+            t: timestep indices
+            clip_denoised: if True, clip denoised samples
+            model_kwargs: if not None, a dict of extra keyword arguments to pass to the model
+            
+        Returns:
+            a dict with the following keys:
+             - 'output': a shape [N] tensor of NLLs or KLs
+             - 'pred_xstart': the x_0 predictions
         """
-        batch_size = x_start.shape[0]
-        t = th.tensor([self.num_timesteps - 1] * batch_size, device=x_start.device)
-        qt_mean, _, qt_log_variance = self.q_mean_variance(x_start, t)
-        kl_prior = normal_kl(mean1=qt_mean, logvar1=qt_log_variance, mean2=0.0, logvar2=0.0)
-        return mean_flat(kl_prior) / np.log(2.0)
+        # Get posterior parameters - these work the same in both spaces
+        true_mean, _, true_log_variance_clipped = self.q_posterior_mean_variance(
+            x_start=x_start, x_t=x_t, t=t
+        )
+        
+        # Get model predictions - will return in same space as input
+        out = self.p_mean_variance(
+            model, x_t, t, clip_denoised=clip_denoised, model_kwargs=model_kwargs
+        )
+        
+        # Compute KL divergence - this is space-agnostic since we're just comparing distributions
+        kl = normal_kl(
+            true_mean, true_log_variance_clipped, out["mean"], out["log_variance"]
+        )
+        kl = mean_flat(kl) / np.log(2.0)
+
+        # Compute decoder NLL - this works for both spaces since we're using Gaussian likelihood
+        decoder_nll = -discretized_gaussian_log_likelihood(
+            x_start, means=out["mean"], log_scales=0.5 * out["log_variance"]
+        )
+        assert decoder_nll.shape == x_start.shape
+        decoder_nll = mean_flat(decoder_nll) / np.log(2.0)
+
+        # At the first timestep return the decoder NLL,
+        # otherwise return KL(q(x_{t-1}|x_t,x_0) || p(x_{t-1}|x_t))
+        output = th.where((t == 0), decoder_nll, kl)
+        return {"output": output, "pred_xstart": out["pred_xstart"]}
 
     def calc_bpd_loop(self, model, x_start, clip_denoised=True, model_kwargs=None):
         """
