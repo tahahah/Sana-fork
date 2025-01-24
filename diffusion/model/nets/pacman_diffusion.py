@@ -97,12 +97,19 @@ class PacmanDiffusionModel(nn.Module):
     
     def forward_with_dpmsolver(self, x, timestep, y, data_info, obs=None, **kwargs):
         """
-        dpm solver donnot need variance prediction
+        DPM solver doesn't need variance prediction
         """
-        # https://github.com/openai/glide-text2im/blob/main/notebooks/text2im.ipynb
+        if obs is not None:
+            x = self.encode_history(x, obs)
+        else:
+            raise ValueError("obs must be provided for history encoding")
         
-        model_out = self.forward(x, timestep, y, data_info=data_info, obs=obs, **kwargs)
-        return model_out.chunk(2, dim=1)[0] if self.sana.pred_sigma else model_out
+        # Ensure noise prediction has same channels as input
+        out = self.sana(x, timestep, y, data_info=data_info, **kwargs)
+        if self.sana.pred_sigma:
+            # Split into mean and variance if model predicts both
+            out = out.chunk(2, dim=1)[0]
+        return out
 
     def forward(self, x, timestep, y, mask=None, data_info=None, obs=None, **kwargs):
         """
@@ -122,23 +129,20 @@ class PacmanDiffusionModel(nn.Module):
         if obs is None:
             raise ValueError("obs must be provided for history encoding")
         
-        
-        # print(f"- x shape: {x.shape}")
-        # print(f"- obs shape: {obs.shape}")
         # 1. Concatenate noisy frame with observation frames in pixel space
         concat_input = torch.cat([obs, x], dim=1)  # [b, 3*seq_length, h, w]
         
         # 2. Process through history encoder to get single frame
         processed = self.history_encoder(concat_input)  # [b, 3, h, w]
         
-    # 3. Encode through VAE to get latents, allowing gradients to flow
+        # 3. Encode through VAE to get latents, allowing gradients to flow
         with torch.set_grad_enabled(True):  # Ensure gradients flow through VAE
             pixel_output = self.sana(processed, timestep, y, mask=mask, data_info=data_info, **kwargs)
         return pixel_output
     
     def forward_without_dpmsolver(self, x, timestep, y, data_info, obs=None, **kwargs):
         """
-        dpm solver donnot need variance prediction
+        DPM solver doesn't need variance prediction
         """
         # https://github.com/openai/glide-text2im/blob/main/notebooks/text2im.ipynb
         
