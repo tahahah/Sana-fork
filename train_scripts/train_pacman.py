@@ -200,11 +200,11 @@ def log_validation(accelerator, config, model, logger, step, device, vae=None, i
             )
             denoised = dpm_solver.sample(
                 z,
-                steps=40,
+                steps=100,  # Increase from 40 to 100
                 order=2,
                 skip_type="time_uniform_flow",
                 method="multistep",
-                flow_shift=config.scheduler.flow_shift,
+                flow_shift=1.0,  # Explicitly set to 1.0
             )
             print(f"Debug - denoised shape after dpm_solver: {denoised.shape if denoised is not None else None}")
         else:
