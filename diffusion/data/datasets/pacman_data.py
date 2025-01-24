@@ -124,7 +124,7 @@ class PacmanDataset(IterableDataset):
             self.transform = transforms.Compose([
                 transforms.Lambda(convert_to_rgb),
                 transforms.Lambda(make_square),  # Make the image square with padding
-                transforms.Resize(512),          # Resize to 512x512
+                transforms.Resize(256),          # Resize to 256x256
                 transforms.functional.hflip,     # Horizontal mirror flip
                 transforms.Lambda(rotate_90_clockwise),  # Rotate 90 degrees clockwise
                 transforms.ToTensor(),

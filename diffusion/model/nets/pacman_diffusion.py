@@ -59,7 +59,7 @@ class PacmanDiffusionModel(nn.Module):
         self.sana = SanaMS(
             input_size=input_size,
             patch_size=patch_size,
-            in_channels=32,  
+            in_channels=3,  
             hidden_size=hidden_size,
             depth=depth,
             num_heads=num_heads,
@@ -131,16 +131,19 @@ class PacmanDiffusionModel(nn.Module):
         # 2. Process through history encoder to get single frame
         processed = self.history_encoder(concat_input)  # [b, 3, h, w]
         
-        # 3. Encode through VAE to get latents, allowing gradients to flow
-        if self.vae is not None:
-            with torch.set_grad_enabled(True):  # Ensure gradients flow through VAE
-                encoded = self.vae.encode(processed)
-                latent_output = self.sana(encoded, timestep, y, mask=mask, data_info=data_info, **kwargs)
-                pixel_output = self.vae.decode(latent_output)
-            return pixel_output
-        else:
-            raise ValueError("VAE model must be provided")
-
+    # 3. Encode through VAE to get latents, allowing gradients to flow
+        with torch.set_grad_enabled(True):  # Ensure gradients flow through VAE
+            pixel_output = self.sana(processed, timestep, y, mask=mask, data_info=data_info, **kwargs)
+        return pixel_output
+    
+    def forward_without_dpmsolver(self, x, timestep, y, data_info, obs=None, **kwargs):
+        """
+        dpm solver donnot need variance prediction
+        """
+        # https://github.com/openai/glide-text2im/blob/main/notebooks/text2im.ipynb
+        
+        model_out = self.forward(x, timestep, y, data_info=data_info, obs=obs, **kwargs)
+        return model_out.chunk(2, dim=1)[0] if self.sana.pred_sigma else model_out
 
 # @MODELS.register_module()
 # def SanaMS_PACMAN_P1_D12(**kwargs):

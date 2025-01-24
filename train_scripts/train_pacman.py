@@ -216,7 +216,7 @@ def log_validation(accelerator, config, model, logger, step, device, vae=None, i
         
         for latent in latents:
             print(f"Debug - latent: {latent.shape if latent is not None else None}")
-            print(f"Debug - vae: {type(vae)}")
+            print(f"Debug - vae: {type(vae) if vae else None}")
             if vae is not None:
                 print(f"Debug - vae.cfg: {vae.cfg if hasattr(vae, 'cfg') else None}")
             
@@ -247,12 +247,12 @@ def log_validation(accelerator, config, model, logger, step, device, vae=None, i
         return current_image_logs
 
     # Run with original noise
-    image_logs += run_sampling(init_z=None, label_suffix="", vae=vae, sampler=vis_sampler)
+    image_logs += run_sampling(init_z=None, label_suffix="", sampler=vis_sampler)
 
     # Run with init_noise if provided
     if init_noise is not None:
         init_noise = torch.clone(init_noise).to(device)
-        image_logs += run_sampling(init_z=init_noise, label_suffix=" w/ init noise", vae=vae, sampler=vis_sampler)
+        image_logs += run_sampling(init_z=init_noise, label_suffix=" w/ init noise", sampler=vis_sampler)
 
     formatted_images = []
     for log in image_logs:
@@ -316,7 +316,8 @@ def log_validation(accelerator, config, model, logger, step, device, vae=None, i
         )
         concatenated_image.save(save_path)
 
-    del vae
+    if vae:
+        del vae
     torch.cuda.empty_cache()
     flush()
     return image_logs
@@ -652,9 +653,9 @@ def main(cfg: SanaConfig) -> None:
         if getattr(config.train, "deterministic_validation", False)
         else None
     )
-    if not config.data.load_vae_feat:
-        vae = get_vae(config.vae.vae_type, config.vae.vae_pretrained, accelerator.device).to(torch.float16)
-    logger.info(f"vae type: {config.vae.vae_type}")
+    # if not config.data.load_vae_feat:
+    #     vae = get_vae(config.vae.vae_type, config.vae.vae_pretrained, accelerator.device).to(torch.float16)
+    # logger.info(f"vae type: {config.vae.vae_type}")
 
     os.makedirs(config.train.null_embed_root, exist_ok=True)
     null_embed_path = osp.join(
