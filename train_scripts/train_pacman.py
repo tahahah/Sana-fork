@@ -130,92 +130,94 @@ def log_validation(accelerator, config, model, logger, step, device, vae=None, i
         latents = []
         current_image_logs = []
         
-        # Get a batch of validation samples from the dataset and ensure consistent dtype
-        img = batch['img'].to(device=device, dtype=dtype)  # [B, C, H, W]
-        obs = batch['obs'].to(device=device, dtype=dtype) # [B, S*C, H, W]
-        actions = batch['y'].to(device=device, dtype=dtype)  # [B, S, A]
-        action_masks = batch['y_mask'].to(device=device, dtype=dtype)  # [B, S]
-        
-        print(f"Debug shapes:")
-        print(f"- img shape: {img.shape}")
-        print(f"- obs shape: {obs.shape}")
-        print(f"- actions shape before: {actions.shape}")
-        print(f"- null_action shape: {null_action.shape}")
-        
-        # Reshape actions to match model expectations [B, 1, S, A]
-        actions = actions.unsqueeze(1)  # Add the extra dimension
-        
-        print(f"- actions shape after: {actions.shape}")
-        
-        batch_size = img.shape[0]
-        seq_len = img.shape[1] # seq_len*32
-        
-        # Generate initial noise if not provided
-        z = init_z if init_z is not None else torch.randn_like(img, dtype=dtype)
-        print(f"Debug - initial z shape: {z.shape}")
-        
-        # Base model kwargs for the shape info and observations
-        model_kwargs = dict(
-            data_info={"img_hw": hw, "aspect_ratio": ar},
-            mask=None,  # Use mask directly from dataset
-            obs=obs,  # Pass observations to be concatenated with noise in the model
-        )
+        # Use autocast for mixed precision
+        with torch.cuda.amp.autocast(enabled=config.model.mixed_precision):
+            # Get a batch of validation samples from the dataset
+            img = batch['img'].to(device=device)  # [B, C, H, W]
+            obs = batch['obs'].to(device=device) # [B, S*C, H, W]
+            actions = batch['y'].to(device=device)  # [B, S, A]
+            action_masks = batch['y_mask'].to(device=device)  # [B, S]
+            
+            print(f"Debug shapes:")
+            print(f"- img shape: {img.shape}")
+            print(f"- obs shape: {obs.shape}")
+            print(f"- actions shape before: {actions.shape}")
+            print(f"- null_action shape: {null_action.shape}")
+            
+            # Reshape actions to match model expectations [B, 1, S, A]
+            actions = actions.unsqueeze(1)  # Add the extra dimension
+            
+            print(f"- actions shape after: {actions.shape}")
+            
+            batch_size = img.shape[0]
+            seq_len = img.shape[1] # seq_len*32
+            
+            # Generate initial noise if not provided
+            z = init_z if init_z is not None else torch.randn_like(img)
+            print(f"Debug - initial z shape: {z.shape}")
+            
+            # Base model kwargs for the shape info and observations
+            model_kwargs = dict(
+                data_info={"img_hw": hw, "aspect_ratio": ar},
+                mask=None,  # Use mask directly from dataset
+                obs=obs,  # Pass observations to be concatenated with noise in the model
+            )
 
-        if sampler == "dpm-solver":
-            dpm_solver = DPMS(
-                model.sana.forward_with_dpmsolver,
-                condition=actions,  # Use actions as condition
-                uncondition=null_action,  # Use null action as uncondition
-                cfg_scale=4.5,  # Same scale as original code
-                model_kwargs=model_kwargs,
-                model_type="flow",
-                schedule="FLOW",
-            )
-            denoised = dpm_solver.sample(
-                z,
-                steps=40,
-                order=2,
-                skip_type="time_uniform_flow",
-                method="multistep",
-                flow_shift=config.scheduler.flow_shift,
-            )
-            print(f"Debug - denoised shape after dpm_solver: {denoised.shape if denoised is not None else None}")
-        elif sampler == "flow_euler":
-            flow_solver = FlowEuler(
-                model, 
-                condition=actions,  # Use actions as condition
-                uncondition=null_action,  # Use null action as uncondition
-                cfg_scale=4.5,  # Same scale as original code
-                model_kwargs=model_kwargs
-            )
-            denoised = flow_solver.sample(
-                z,
-                steps=28
-            )
-            print(f"Debug - denoised shape after flow_euler: {denoised.shape if denoised is not None else None}")
-        elif sampler == "flow_dpm-solver":
-            dpm_solver = DPMS(
-                model.forward_with_dpmsolver,
-                condition=actions,  # Use actions as condition
-                uncondition=null_action,  # Use null action as uncondition
-                cfg_scale=4.5,  # Same scale as original code
-                model_type="flow",
-                model_kwargs=model_kwargs,
-                schedule="FLOW",
-            )
-            denoised = dpm_solver.sample(
-                z,
-                steps=100,  # Increase from 40 to 100
-                order=2,
-                skip_type="time_uniform_flow",
-                method="multistep",
-                flow_shift=1.0,  # Explicitly set to 1.0
-            )
-            print(f"Debug - denoised shape after dpm_solver: {denoised.shape if denoised is not None else None}")
-        else:
-            raise ValueError(f"{sampler} not implemented")
+            if sampler == "dpm-solver":
+                dpm_solver = DPMS(
+                    model.sana.forward_with_dpmsolver,
+                    condition=actions,  # Use actions as condition
+                    uncondition=null_action,  # Use null action as uncondition
+                    cfg_scale=4.5,  # Same scale as original code
+                    model_kwargs=model_kwargs,
+                    model_type="flow",
+                    schedule="FLOW",
+                )
+                denoised = dpm_solver.sample(
+                    z,
+                    steps=40,
+                    order=2,
+                    skip_type="time_uniform_flow",
+                    method="multistep",
+                    flow_shift=config.scheduler.flow_shift,
+                )
+                print(f"Debug - denoised shape after dpm_solver: {denoised.shape if denoised is not None else None}")
+            elif sampler == "flow_euler":
+                flow_solver = FlowEuler(
+                    model, 
+                    condition=actions,  # Use actions as condition
+                    uncondition=null_action,  # Use null action as uncondition
+                    cfg_scale=4.5,  # Same scale as original code
+                    model_kwargs=model_kwargs
+                )
+                denoised = flow_solver.sample(
+                    z,
+                    steps=28
+                )
+                print(f"Debug - denoised shape after flow_euler: {denoised.shape if denoised is not None else None}")
+            elif sampler == "flow_dpm-solver":
+                dpm_solver = DPMS(
+                    model.forward_with_dpmsolver,
+                    condition=actions,  # Use actions as condition
+                    uncondition=null_action,  # Use null action as uncondition
+                    cfg_scale=4.5,  # Same scale as original code
+                    model_type="flow",
+                    model_kwargs=model_kwargs,
+                    schedule="FLOW",
+                )
+                denoised = dpm_solver.sample(
+                    z,
+                    steps=100,  # Increase from 40 to 100
+                    order=2,
+                    skip_type="time_uniform_flow",
+                    method="multistep",
+                    flow_shift=1.0,  # Explicitly set to 1.0
+                )
+                print(f"Debug - denoised shape after dpm_solver: {denoised.shape if denoised is not None else None}")
+            else:
+                raise ValueError(f"{sampler} not implemented")
 
-        latents.append(denoised)
+            latents.append(denoised)
         
         torch.cuda.empty_cache()
         
