@@ -90,17 +90,23 @@ def log_validation(accelerator, config, model, logger, step, device, vae=None, i
     except StopIteration:
         # If we've exhausted the iterator, create a new one
         val_iterator = iter(val_dataloader)
-        batch = next(val_iterator)
+    batch = next(val_iterator)
     
     vis_sampler = config.scheduler.vis_sampler
     model = accelerator.unwrap_model(model).eval().to(device=device)
-    hw = torch.tensor([[config.model.image_size, config.model.image_size]], device=device).repeat(1, 1)
-    ar = torch.tensor([[1.0]], device=device).repeat(1, 1)
+    
+    # Set model dtype based on config
+    dtype = torch.float16 if config.model.mixed_precision else torch.float32
+    model = model.to(dtype=dtype)
+    
+    # Create tensors with consistent dtype
+    hw = torch.tensor([[config.model.image_size, config.model.image_size]], device=device, dtype=dtype).repeat(1, 1)
+    ar = torch.tensor([[1.0]], device=device, dtype=dtype).repeat(1, 1)
     
     # Create null action tensors for classifier-free guidance
     seq_len = config.data.sequence_length
-    null_action = torch.zeros(batch_size, 1, seq_len-1, 5, device=device)  # 5 is number of actions
-    null_action_mask = torch.ones(batch_size, seq_len-1, device=device)
+    null_action = torch.zeros(batch_size, 1, seq_len-1, 5, device=device, dtype=dtype)  # 5 is number of actions
+    null_action_mask = torch.ones(batch_size, seq_len-1, device=device, dtype=dtype)
 
     null_action = null_action.unsqueeze(1)
     null_action_mask = null_action_mask.unsqueeze(1)
@@ -124,12 +130,11 @@ def log_validation(accelerator, config, model, logger, step, device, vae=None, i
         latents = []
         current_image_logs = []
         
-        # Get a batch of validation samples from the dataset
-        img = batch['img'].to(device)  # [B, C, H, W]
-        obs = batch['obs'].to(device) # [B, S*C, H, W]
-        actions = batch['y'].to(device)  # [B, S, A]
-        action_masks = batch['y_mask'].to(device)  # [B, S]
-        model.to(dtype=img.dtype)
+        # Get a batch of validation samples from the dataset and ensure consistent dtype
+        img = batch['img'].to(device=device, dtype=dtype)  # [B, C, H, W]
+        obs = batch['obs'].to(device=device, dtype=dtype) # [B, S*C, H, W]
+        actions = batch['y'].to(device=device, dtype=dtype)  # [B, S, A]
+        action_masks = batch['y_mask'].to(device=device, dtype=dtype)  # [B, S]
         
         print(f"Debug shapes:")
         print(f"- img shape: {img.shape}")
@@ -146,8 +151,7 @@ def log_validation(accelerator, config, model, logger, step, device, vae=None, i
         seq_len = img.shape[1] # seq_len*32
         
         # Generate initial noise if not provided
-        z = init_z if init_z is not None else torch.randn_like(img)
-        # encoded z = torch.randn([1, vae.cfg.latent_channels, img.shape[-2]//vae.cfg.latent_channels, img.shape[-1]//vae.cfg.latent_channels], device=device)
+        z = init_z if init_z is not None else torch.randn_like(img, dtype=dtype)
         print(f"Debug - initial z shape: {z.shape}")
         
         # Base model kwargs for the shape info and observations
