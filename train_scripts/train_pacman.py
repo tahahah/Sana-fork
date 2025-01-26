@@ -93,7 +93,7 @@ def log_validation(accelerator, config, model, logger, step, device, vae=None, i
         batch = next(val_iterator)
     
     vis_sampler = config.scheduler.vis_sampler
-    model = accelerator.unwrap_model(model).eval()
+    model = accelerator.unwrap_model(model).eval().to(device)
     hw = torch.tensor([[config.model.image_size, config.model.image_size]], dtype=torch.float, device=device).repeat(1, 1)
     ar = torch.tensor([[1.0]], device=device).repeat(1, 1)
     
