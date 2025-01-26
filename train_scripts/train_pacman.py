@@ -536,7 +536,7 @@ def train(config, args, accelerator, model, optimizer, lr_scheduler, train_datal
                             model=model,
                             logger=logger,
                             step=global_step,
-                            # device=accelerator.device,
+                            device=accelerator.device,
                             vae=vae,
                             init_noise=validation_noise,
                         )
@@ -547,7 +547,7 @@ def train(config, args, accelerator, model, optimizer, lr_scheduler, train_datal
                             model=model,
                             logger=logger,
                             step=global_step,
-                            # device=accelerator.device,
+                            device=accelerator.device,
                             vae=vae,
                         )
 
