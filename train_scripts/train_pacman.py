@@ -68,6 +68,8 @@ def set_fsdp_env():
 def log_validation(accelerator, config, model, logger, step, device, vae=None, init_noise=None):
     print("\n=== Starting Validation ===")
     torch.cuda.empty_cache()
+    if device is None:
+        device = accelerator.device
     global val_dataset, val_dataloader, val_iterator
     
     # Initialize validation dataset and dataloader if not already done
@@ -93,7 +95,19 @@ def log_validation(accelerator, config, model, logger, step, device, vae=None, i
     batch = next(val_iterator)
     
     vis_sampler = config.scheduler.vis_sampler
-    model = accelerator.unwrap_model(model).eval().to(device=device)
+    
+    # Properly handle model state
+    model = accelerator.unwrap_model(model)
+    model.eval()
+    
+    # Clone model parameters to avoid inference mode issues
+    model_state = {
+        name: param.detach().clone() 
+        for name, param in model.state_dict().items()
+    }
+    model.load_state_dict(model_state)
+    
+    model = model.to(device=device)
     
     # Set model dtype based on config
     dtype = torch.float16 if config.model.mixed_precision else torch.float32
@@ -130,8 +144,8 @@ def log_validation(accelerator, config, model, logger, step, device, vae=None, i
         latents = []
         current_image_logs = []
         
-        # Use autocast for mixed precision
-        with torch.cuda.amp.autocast(enabled=True):
+        # Ensure we're not in inference mode during validation
+        with torch.no_grad(), torch.cuda.amp.autocast(enabled=True):
             # Get a batch of validation samples from the dataset
             img = batch['img'].to(device=device)  # [B, C, H, W]
             obs = batch['obs'].to(device=device) # [B, S*C, H, W]
@@ -522,7 +536,7 @@ def train(config, args, accelerator, model, optimizer, lr_scheduler, train_datal
                             model=model,
                             logger=logger,
                             step=global_step,
-                            device=accelerator.device,
+                            # device=accelerator.device,
                             vae=vae,
                             init_noise=validation_noise,
                         )
@@ -533,7 +547,7 @@ def train(config, args, accelerator, model, optimizer, lr_scheduler, train_datal
                             model=model,
                             logger=logger,
                             step=global_step,
-                            device=accelerator.device,
+                            # device=accelerator.device,
                             vae=vae,
                         )
 
