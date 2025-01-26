@@ -100,12 +100,12 @@ class PacmanDiffusionModel(nn.Module):
         DPM solver doesn't need variance prediction
         """
         if obs is not None:
-            x = self.encode_history(x, obs)
+            x_obs = self.encode_history(x, obs)
         else:
             raise ValueError("obs must be provided for history encoding")
         
         # Ensure noise prediction has same channels as input
-        out = self.sana(x, timestep, y, data_info=data_info, **kwargs)
+        out = self.sana(x_obs if x_obs else x, timestep, y, data_info=data_info, **kwargs)
         if self.sana.pred_sigma:
             # Split into mean and variance if model predicts both
             out = out.chunk(2, dim=1)[0]
