@@ -52,7 +52,7 @@ class PacmanDiffusionModel(nn.Module):
         self.history_encoder = build_history_encoder(
             in_channels=3 * seq_length,  
             out_channels=3,  
-            hidden_channels=3 * seq_length // 2  
+            hidden_dim=3 * seq_length // 2  
         )
         
         # Create Sana model for diffusion with latent input channels from VAE
