@@ -93,8 +93,8 @@ def log_validation(accelerator, config, model, logger, step, device, vae=None, i
         batch = next(val_iterator)
     
     vis_sampler = config.scheduler.vis_sampler
-    model = accelerator.unwrap_model(model).eval().to(device)
-    hw = torch.tensor([[config.model.image_size, config.model.image_size]], dtype=torch.float, device=device).repeat(1, 1)
+    model = accelerator.unwrap_model(model).eval().to(device=device)
+    hw = torch.tensor([[config.model.image_size, config.model.image_size]], device=device).repeat(1, 1)
     ar = torch.tensor([[1.0]], device=device).repeat(1, 1)
     
     # Create null action tensors for classifier-free guidance
@@ -129,6 +129,7 @@ def log_validation(accelerator, config, model, logger, step, device, vae=None, i
         obs = batch['obs'].to(device) # [B, S*C, H, W]
         actions = batch['y'].to(device)  # [B, S, A]
         action_masks = batch['y_mask'].to(device)  # [B, S]
+        model.to(dtype=img.dtype)
         
         print(f"Debug shapes:")
         print(f"- img shape: {img.shape}")
