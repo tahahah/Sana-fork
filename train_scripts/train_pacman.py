@@ -138,6 +138,15 @@ def log_validation(accelerator, config, model, logger, step, device, vae=None, i
             actions = batch['y'].to(device=device)  # [B, S, A]
             action_masks = batch['y_mask'].to(device=device)  # [B, S]
             
+            # Clone tensors to ensure they're not in inference mode
+            img = img.clone()
+            obs = obs.clone()
+            actions = actions.clone()
+            action_masks = action_masks.clone()
+            
+            # Ensure model is in the correct mode
+            model.train(False)  # Set to eval mode for validation
+            
             print(f"Debug shapes:")
             print(f"- img shape: {img.shape}")
             print(f"- obs shape: {obs.shape}")
@@ -164,24 +173,26 @@ def log_validation(accelerator, config, model, logger, step, device, vae=None, i
             )
 
             if sampler == "dpm-solver":
-                dpm_solver = DPMS(
-                    model.sana.forward_with_dpmsolver,
-                    condition=actions,  # Use actions as condition
-                    uncondition=null_action,  # Use null action as uncondition
-                    cfg_scale=4.5,  # Same scale as original code
-                    model_kwargs=model_kwargs,
-                    model_type="flow",
-                    schedule="FLOW",
-                )
-                denoised = dpm_solver.sample(
-                    z,
-                    steps=40,
-                    order=2,
-                    skip_type="time_uniform_flow",
-                    method="multistep",
-                    flow_shift=config.scheduler.flow_shift,
-                )
-                print(f"Debug - denoised shape after dpm_solver: {denoised.shape if denoised is not None else None}")
+                # Ensure we're not in inference mode for DPM solver
+                with torch.set_grad_enabled(False):
+                    dpm_solver = DPMS(
+                        model.sana.forward_with_dpmsolver,
+                        condition=actions,  # Use actions as condition
+                        uncondition=null_action,  # Use null action as uncondition
+                        cfg_scale=4.5,  # Same scale as original code
+                        model_kwargs=model_kwargs,
+                        model_type="flow",
+                        schedule="FLOW",
+                    )
+                    denoised = dpm_solver.sample(
+                        z,
+                        steps=40,
+                        order=2,
+                        skip_type="time_uniform_flow",
+                        method="multistep",
+                        flow_shift=config.scheduler.flow_shift,
+                    )
+                    print(f"Debug - denoised shape after dpm_solver: {denoised.shape if denoised is not None else None}")
             elif sampler == "flow_euler":
                 flow_solver = FlowEuler(
                     model, 
@@ -196,23 +207,25 @@ def log_validation(accelerator, config, model, logger, step, device, vae=None, i
                 )
                 print(f"Debug - denoised shape after flow_euler: {denoised.shape if denoised is not None else None}")
             elif sampler == "flow_dpm-solver":
-                dpm_solver = DPMS(
-                    model.forward_with_dpmsolver,
-                    condition=actions,  # Use actions as condition
-                    uncondition=null_action,  # Use null action as uncondition
-                    cfg_scale=4.5,  # Same scale as original code
-                    model_type="flow",
-                    model_kwargs=model_kwargs,
-                    schedule="FLOW",
-                )
-                denoised = dpm_solver.sample(
-                    z,
-                    steps=100,  # Increase from 40 to 100
-                    order=2,
-                    skip_type="time_uniform_flow",
-                    method="multistep",
-                    flow_shift=1.0,  # Explicitly set to 1.0
-                )
+                with torch.set_grad_enabled(False):
+
+                    dpm_solver = DPMS(
+                        model.forward_with_dpmsolver,
+                        condition=actions,  # Use actions as condition
+                        uncondition=null_action,  # Use null action as uncondition
+                        cfg_scale=4.5,  # Same scale as original code
+                        model_type="flow",
+                        model_kwargs=model_kwargs,
+                        schedule="FLOW",
+                    )
+                    denoised = dpm_solver.sample(
+                        z,
+                        steps=100,  # Increase from 40 to 100
+                        order=2,
+                        skip_type="time_uniform_flow",
+                        method="multistep",
+                        flow_shift=1.0,  # Explicitly set to 1.0
+                    )
                 print(f"Debug - denoised shape after dpm_solver: {denoised.shape if denoised is not None else None}")
             else:
                 raise ValueError(f"{sampler} not implemented")
@@ -416,33 +429,14 @@ def train(config, args, accelerator, model, optimizer, lr_scheduler, train_datal
             grad_norm = None
             accelerator.wait_for_everyone()
             model_time_start = time.time()
-            
-            # Ensure model is in training mode
-            model.train()
-            
             with accelerator.accumulate(model):
                 # Predict the noise residual
                 optimizer.zero_grad()
-                
-                # Move tensors to the right device and dtype
-                clean_images = clean_images.to(device=accelerator.device, dtype=model.dtype)
-                obs = obs.to(device=accelerator.device, dtype=model.dtype)
-                y = y.to(device=accelerator.device, dtype=model.dtype)
-                y_mask = y_mask.to(device=accelerator.device, dtype=model.dtype)
-                
                 loss_term = train_diffusion.training_losses(
-                    model, 
-                    clean_images, 
-                    torch.randint(0, config.scheduler.train_sampling_steps, (clean_images.shape[0],), device=clean_images.device).long(), 
-                    model_kwargs=dict(
-                        y=y,
-                        mask=y_mask,
-                        data_info=data_info,
-                        obs=obs
-                    )
-                )
+                    model, clean_images, torch.randint(0, config.scheduler.train_sampling_steps, (clean_images.shape[0],), device=clean_images.device).long(), 
+                    model_kwargs=dict(y=y, mask=y_mask, data_info=data_info, obs=obs)
+            )
                 loss = loss_term["loss"].mean()
-                
             accelerator.backward(loss)
             if accelerator.sync_gradients:
                 grad_norm = accelerator.clip_grad_norm_(model.parameters(), config.train.gradient_clip)
