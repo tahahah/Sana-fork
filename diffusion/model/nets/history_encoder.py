@@ -10,40 +10,43 @@ class HistoryEncoder(nn.Module):
     and outputs [batch_size, 3, height, width]
     """
     
-    def __init__(self, in_channels=96, out_channels=3, hidden_channels=None):
+    def __init__(self, in_channels=96, out_channels=3, hidden_dim=48):
         super().__init__()
-        if hidden_channels is None:
-            hidden_channels = [32, 64, 128, 256]
-
-        layers = []
-        current_channels = in_channels
-
-        for hidden_ch in hidden_channels:
-            layers.extend([
-                nn.Conv2d(current_channels, hidden_ch, kernel_size=3, stride=1, padding=1),
-                nn.BatchNorm2d(hidden_ch),
-                nn.ReLU(inplace=True),
-                nn.MaxPool2d(kernel_size=2, stride=2)
-            ])
-            current_channels = hidden_ch
-
-        # Final layer to match output channels
-        layers.append(nn.Conv2d(current_channels, out_channels, kernel_size=1))
         
-        self.conv_layers = nn.Sequential(*layers)
+        # Create a sequence of Conv layers to gradually reduce channels while preserving spatial dimensions
+        self.conv_layers = nn.Sequential(
+            # First layer: in_channels -> hidden_dim 
+            nn.Conv2d(in_channels, hidden_dim, kernel_size=3, padding=1),
+            nn.BatchNorm2d(hidden_dim),
+            nn.ReLU(),
+            
+            # Second layer: hidden_dim -> hidden_dim//2
+            nn.Conv2d(hidden_dim, hidden_dim//2, kernel_size=3, padding=1), 
+            nn.BatchNorm2d(hidden_dim//2),
+            nn.ReLU(),
+            
+            # Third layer: hidden_dim//2 -> hidden_dim//4
+            nn.Conv2d(hidden_dim//2, hidden_dim//4, kernel_size=3, padding=1),
+            nn.BatchNorm2d(hidden_dim//4),
+            nn.ReLU(),
+            
+            # Final layer: hidden_dim//4 -> out_channels (3 for RGB)
+            nn.Conv2d(hidden_dim//4, out_channels, kernel_size=3, padding=1),
+            nn.BatchNorm2d(out_channels),
+        )
         
         # Initialize weights
         self.apply(self._init_weights)
     
     def _init_weights(self, m):
-        if isinstance(m, nn.Conv2d):
-            nn.init.kaiming_normal_(m.weight)
+        if isinstance(m, nn.Conv2d):  
+            nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
             if m.bias is not None:
-                nn.init.zeros_(m.bias)
-        elif isinstance(m, nn.BatchNorm2d):
-            nn.init.ones_(m.weight)
-            nn.init.zeros_(m.bias)
-
+                nn.init.constant_(m.bias, 0)
+        elif isinstance(m, nn.BatchNorm2d):  
+            nn.init.constant_(m.weight, 1)
+            nn.init.constant_(m.bias, 0)
+    
     def forward(self, x):
         """
         Args:
@@ -53,9 +56,6 @@ class HistoryEncoder(nn.Module):
         Returns:
             Tensor of shape [batch_size, 3, height, width]
         """
-        # Ensure input is float32 during training for stability
-        if self.training:
-            x = x.float()
         return self.conv_layers(x)
 
 
