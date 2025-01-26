@@ -131,7 +131,7 @@ def log_validation(accelerator, config, model, logger, step, device, vae=None, i
         current_image_logs = []
         
         # Use autocast for mixed precision
-        with torch.cuda.amp.autocast(enabled=config.model.mixed_precision):
+        with torch.cuda.amp.autocast(enabled=True):
             # Get a batch of validation samples from the dataset
             img = batch['img'].to(device=device)  # [B, C, H, W]
             obs = batch['obs'].to(device=device) # [B, S*C, H, W]
