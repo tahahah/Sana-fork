@@ -68,8 +68,6 @@ def set_fsdp_env():
 def log_validation(accelerator, config, model, logger, step, device, vae=None, init_noise=None):
     print("\n=== Starting Validation ===")
     torch.cuda.empty_cache()
-    if device is None:
-        device = accelerator.device
     global val_dataset, val_dataloader, val_iterator
     
     # Initialize validation dataset and dataloader if not already done
@@ -95,19 +93,7 @@ def log_validation(accelerator, config, model, logger, step, device, vae=None, i
     batch = next(val_iterator)
     
     vis_sampler = config.scheduler.vis_sampler
-    
-    # Properly handle model state
-    model = accelerator.unwrap_model(model)
-    model.eval()
-    
-    # Clone model parameters to avoid inference mode issues
-    model_state = {
-        name: param.detach().clone() 
-        for name, param in model.state_dict().items()
-    }
-    model.load_state_dict(model_state)
-    
-    model = model.to(device=device)
+    model = accelerator.unwrap_model(model).eval().to(device=device)
     
     # Set model dtype based on config
     dtype = torch.float16 if config.model.mixed_precision else torch.float32
@@ -144,8 +130,8 @@ def log_validation(accelerator, config, model, logger, step, device, vae=None, i
         latents = []
         current_image_logs = []
         
-        # Ensure we're not in inference mode during validation
-        with torch.no_grad(), torch.cuda.amp.autocast(enabled=True):
+        # Use autocast for mixed precision
+        with torch.cuda.amp.autocast(enabled=True):
             # Get a batch of validation samples from the dataset
             img = batch['img'].to(device=device)  # [B, C, H, W]
             obs = batch['obs'].to(device=device) # [B, S*C, H, W]
@@ -430,14 +416,33 @@ def train(config, args, accelerator, model, optimizer, lr_scheduler, train_datal
             grad_norm = None
             accelerator.wait_for_everyone()
             model_time_start = time.time()
+            
+            # Ensure model is in training mode
+            model.train()
+            
             with accelerator.accumulate(model):
                 # Predict the noise residual
                 optimizer.zero_grad()
+                
+                # Move tensors to the right device and dtype
+                clean_images = clean_images.to(device=accelerator.device, dtype=model.dtype)
+                obs = obs.to(device=accelerator.device, dtype=model.dtype)
+                y = y.to(device=accelerator.device, dtype=model.dtype)
+                y_mask = y_mask.to(device=accelerator.device, dtype=model.dtype)
+                
                 loss_term = train_diffusion.training_losses(
-                    model, clean_images, torch.randint(0, config.scheduler.train_sampling_steps, (clean_images.shape[0],), device=clean_images.device).long(), 
-                    model_kwargs=dict(y=y, mask=y_mask, data_info=data_info, obs=obs)
-            )
+                    model, 
+                    clean_images, 
+                    torch.randint(0, config.scheduler.train_sampling_steps, (clean_images.shape[0],), device=clean_images.device).long(), 
+                    model_kwargs=dict(
+                        y=y,
+                        mask=y_mask,
+                        data_info=data_info,
+                        obs=obs
+                    )
+                )
                 loss = loss_term["loss"].mean()
+                
             accelerator.backward(loss)
             if accelerator.sync_gradients:
                 grad_norm = accelerator.clip_grad_norm_(model.parameters(), config.train.gradient_clip)
