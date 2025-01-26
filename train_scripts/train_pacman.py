@@ -629,16 +629,25 @@ def main(cfg: SanaConfig) -> None:
             state_dict_config=FullStateDictConfig(offload_to_cpu=False, rank0_only=False),
         )
     else:
-        init_train = "DDP"
+        init_train = "No DDP"  # Changed from "DDP"
         fsdp_plugin = None
 
+    # Modified accelerator initialization to disable distributed training
     accelerator = Accelerator(
         mixed_precision=config.model.mixed_precision,
         gradient_accumulation_steps=config.train.gradient_accumulation_steps,
         log_with=args.report_to,
         project_dir=osp.join(config.work_dir, "logs"),
-        fsdp_plugin=fsdp_plugin,
+        fsdp_plugin=None,  # Force to None
         kwargs_handlers=[init_handler],
+        # Disable distributed training
+        cpu=False,
+        dispatch_batches=None,
+        split_batches=False,
+        step_scheduler_with_optimizer=True,
+        # Force single process
+        device_placement=True,
+        distributed_type="NO",
     )
 
     log_name = "train_log.log"
@@ -970,6 +979,5 @@ def random_sample_from_iterable(dataset, batch_size=1, upper_limit=100):
     }
 
 if __name__ == "__main__":
-    import torch.multiprocessing as mp
-    mp.set_start_method('spawn', force=True)
+    # Remove multiprocessing since we're running in single process mode
     main()
