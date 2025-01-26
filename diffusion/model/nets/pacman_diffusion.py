@@ -11,8 +11,8 @@ class PacmanDiffusionModel(nn.Module):
     
     def __init__(
         self,
-        input_size=32,
-        in_channels=160,
+        input_size=3,
+        in_channels=15,
         patch_size=1,
         hidden_size=128,
         depth=12,
@@ -59,7 +59,7 @@ class PacmanDiffusionModel(nn.Module):
         self.sana = SanaMS(
             input_size=input_size,
             patch_size=patch_size,
-            in_channels=32,  
+            in_channels=3,  
             hidden_size=hidden_size,
             depth=depth,
             num_heads=num_heads,
@@ -132,14 +132,11 @@ class PacmanDiffusionModel(nn.Module):
         processed = self.history_encoder(concat_input)  # [b, 3, h, w]
         
         # 3. Encode through VAE to get latents, allowing gradients to flow
-        if self.vae is not None:
-            with torch.set_grad_enabled(True):  # Ensure gradients flow through VAE
-                encoded = self.vae.encode(processed)
-                latent_output = self.sana(encoded, timestep, y, mask=mask, data_info=data_info, **kwargs)
-                pixel_output = self.vae.decode(latent_output)
-            return pixel_output
-        else:
-            raise ValueError("VAE model must be provided")
+        with torch.set_grad_enabled(True):  # Ensure gradients flow through VAE
+            # encoded = self.vae.encode(processed)
+            pixel_output = self.sana(processed, timestep, y, mask=mask, data_info=data_info, **kwargs)
+            # pixel_output = self.vae.decode(latent_output)
+        return pixel_output
 
 
 # @MODELS.register_module()

@@ -1,7 +1,7 @@
 data:
   type: PacmanDataset
   data_dir: ["datasets/pacman"]  # Update with actual path
-  resolution: 512
+  resolution: 256
   sequence_length: 5  # Length of action sequences
   load_text_feat: false
   load_vae_feat: false
@@ -12,8 +12,8 @@ data:
 # model config
 model:
   model: SanaMS_PACMAN_P1_D12
-  image_size: 512
-  in_channels: 160
+  image_size: 256
+  in_channels: 15
   mixed_precision: fp16
   fp32_attention: true
   load_from:
@@ -61,7 +61,7 @@ scheduler:
 train:
   num_workers: 1
   seed: 1
-  train_batch_size: 2
+  train_batch_size: 12
   num_epochs: 100
   gradient_accumulation_steps: 1
   grad_checkpointing: true

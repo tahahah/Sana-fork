@@ -216,7 +216,7 @@ def log_validation(accelerator, config, model, logger, step, device, vae=None, i
         
         for latent in latents:
             print(f"Debug - latent: {latent.shape if latent is not None else None}")
-            print(f"Debug - vae: {type(vae)}")
+            print(f"Debug - vae: {type(vae) if vae else None}")
             if vae is not None:
                 print(f"Debug - vae.cfg: {vae.cfg if hasattr(vae, 'cfg') else None}")
             
@@ -315,8 +315,8 @@ def log_validation(accelerator, config, model, logger, step, device, vae=None, i
             else osp.join(local_vis_save_path, f"vis_{step}_w_init.{file_format}")
         )
         concatenated_image.save(save_path)
-
-    del vae
+    if vae:
+        del vae
     torch.cuda.empty_cache()
     flush()
     return image_logs
@@ -483,8 +483,13 @@ def train(config, args, accelerator, model, optimizer, lr_scheduler, train_datal
                 accelerator.wait_for_everyone()
                 if accelerator.is_main_process:
                     os.umask(0o000)
+                    checkpoint_folder = osp.join(config.work_dir, "checkpoints")
+                    folder_size = sum(osp.getsize(osp.join(dirpath, filename)) for dirpath, _, filenames in os.walk(checkpoint_folder) for filename in filenames)
+                    if folder_size > 5 * 1024 * 1024 * 1024:  # 5GB in bytes
+                        logger.info(f"Stopping training at epoch {epoch}, step {global_step} due to checkpoint folder size exceeding 5GB.")
+                        return
                     ckpt_saved_path = save_checkpoint(
-                        osp.join(config.work_dir, "checkpoints"),
+                        checkpoint_folder,
                         epoch=epoch,
                         step=global_step,
                         model=accelerator.unwrap_model(model),
@@ -652,8 +657,8 @@ def main(cfg: SanaConfig) -> None:
         if getattr(config.train, "deterministic_validation", False)
         else None
     )
-    if not config.data.load_vae_feat:
-        vae = get_vae(config.vae.vae_type, config.vae.vae_pretrained, accelerator.device).to(torch.float16)
+    # if not config.data.load_vae_feat:
+    #     vae = get_vae(config.vae.vae_type, config.vae.vae_pretrained, accelerator.device).to(torch.float16)
     logger.info(f"vae type: {config.vae.vae_type}")
 
     os.makedirs(config.train.null_embed_root, exist_ok=True)

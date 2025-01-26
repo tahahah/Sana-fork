@@ -104,7 +104,7 @@ class PacmanDataset(IterableDataset):
             self.mixed_precision = config.model.mixed_precision
         
         # Create blank image for padding
-        self.blank_image = Image.new('RGB', (512, 512), 'black')
+        self.blank_image = Image.new('RGB', (self.resolution, self.resolution), 'black')
         self._cached_blank_frame = None
         self._cached_blank_latent = None  
         
@@ -124,7 +124,7 @@ class PacmanDataset(IterableDataset):
             self.transform = transforms.Compose([
                 transforms.Lambda(convert_to_rgb),
                 transforms.Lambda(make_square),  # Make the image square with padding
-                transforms.Resize(512),          # Resize to 512x512
+                transforms.Resize(self.resolution),          # Resize to 512x512
                 transforms.functional.hflip,     # Horizontal mirror flip
                 transforms.Lambda(rotate_90_clockwise),  # Rotate 90 degrees clockwise
                 transforms.ToTensor(),
