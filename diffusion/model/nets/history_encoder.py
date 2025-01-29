@@ -20,18 +20,18 @@ class HistoryEncoder(nn.Module):
             nn.BatchNorm2d(hidden_dim),
             nn.ReLU(),
             
-            # Second layer: hidden_dim -> hidden_dim//2
-            nn.Conv2d(hidden_dim, hidden_dim//2, kernel_size=3, padding=1), 
-            nn.BatchNorm2d(hidden_dim//2),
-            nn.ReLU(),
+            # # Second layer: hidden_dim -> hidden_dim//2
+            # nn.Conv2d(hidden_dim, hidden_dim//2, kernel_size=3, padding=1), 
+            # nn.BatchNorm2d(hidden_dim//2),
+            # nn.ReLU(),
             
-            # Third layer: hidden_dim//2 -> hidden_dim//4
-            nn.Conv2d(hidden_dim//2, hidden_dim//4, kernel_size=3, padding=1),
-            nn.BatchNorm2d(hidden_dim//4),
-            nn.ReLU(),
+            # # Third layer: hidden_dim//2 -> hidden_dim//4
+            # nn.Conv2d(hidden_dim//2, hidden_dim//4, kernel_size=3, padding=1),
+            # nn.BatchNorm2d(hidden_dim//4),
+            # nn.ReLU(),
             
             # Final layer: hidden_dim//4 -> out_channels (3 for RGB)
-            nn.Conv2d(hidden_dim//4, out_channels, kernel_size=3, padding=1),
+            nn.Conv2d(hidden_dim, out_channels, kernel_size=3, padding=1),
             nn.BatchNorm2d(out_channels),
         )
         
