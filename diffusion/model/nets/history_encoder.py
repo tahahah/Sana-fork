@@ -59,6 +59,6 @@ class HistoryEncoder(nn.Module):
         return self.conv_layers(x)
 
 
-@MODELS.register_module()
-def build_history_encoder(**kwargs):
-    return HistoryEncoder(**kwargs)
+# @MODELS.register_module()
+# def build_history_encoder(**kwargs):
+#     return HistoryEncoder(**kwargs)
