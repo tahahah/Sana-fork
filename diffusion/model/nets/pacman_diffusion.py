@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from diffusion.model.builder import MODELS
 from diffusion.model.nets.history_encoder3d import build_history_encoder
-from diffusion.model.nets.sana_multi_scale import SanaMS
+from diffusion.model.nets.sana_U_shape import SanaU
 from diffusion.model.builder import vae_encode, vae_decode
 
 
@@ -56,7 +56,7 @@ class PacmanDiffusionModel(nn.Module):
         )
         
         # Create Sana model for diffusion with latent input channels from VAE
-        self.sana = SanaMS(
+        self.sana = SanaU(
             input_size=input_size,
             patch_size=patch_size,
             in_channels=3,  
