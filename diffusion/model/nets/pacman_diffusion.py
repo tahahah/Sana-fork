@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from diffusion.model.builder import MODELS
 from diffusion.model.nets.history_encoder3d import build_history_encoder
-from diffusion.model.nets.sana_U_shape import SanaU
+from diffusion.model.nets.sana_multi_scale import SanaMS
 from diffusion.model.builder import vae_encode, vae_decode
 
 
@@ -56,7 +56,7 @@ class PacmanDiffusionModel(nn.Module):
         )
         
         # Create Sana model for diffusion with latent input channels from VAE
-        self.sana = SanaU(
+        self.sana = SanaMS(
             input_size=input_size,
             patch_size=patch_size,
             in_channels=3,  
@@ -81,6 +81,13 @@ class PacmanDiffusionModel(nn.Module):
             linear_head_dim=linear_head_dim,
             cross_norm=cross_norm,
             **kwargs
+        )
+
+        # Add detail enhancer network
+        self.detail_enhancer = nn.Sequential(
+            nn.Conv2d(3, 32, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.Conv2d(32, 3, kernel_size=3, padding=1)
         )
     
     def encode_history(self, x, obs):
@@ -131,12 +138,39 @@ class PacmanDiffusionModel(nn.Module):
         # 2. Process through history encoder to get single frame
         processed = self.history_encoder(concat_input)  # [b, 3, h, w]
         
-        # 3. Encode through VAE to get latents, allowing gradients to flow
-        with torch.set_grad_enabled(True):  # Ensure gradients flow through VAE
-            # encoded = self.vae.encode(processed)
-            pixel_output = self.sana(processed, timestep, y, mask=mask, data_info=data_info, **kwargs)
-            # pixel_output = self.vae.decode(latent_output)
-        return pixel_output
+        # Store detail residual
+        detail_map = x - processed  # Both in pixel space
+        
+        # 3. Process through Sana and enhance details
+        with torch.set_grad_enabled(True):
+            base_output = self.sana(processed, timestep, y, mask=mask, data_info=data_info, **kwargs)
+            detail_enhanced = self.detail_enhancer(detail_map)
+            final_output = base_output + detail_enhanced
+
+            # Log intermediate states if accelerator is available
+            if 'accelerator' in kwargs:
+                # Convert tensors to images in range [0, 1] for visualization
+                def prepare_for_vis(img):
+                    return ((img[0].detach().cpu().float() + 1) / 2).clamp(0, 1).permute(1, 2, 0).numpy()
+
+                processed_vis = prepare_for_vis(processed)
+                detail_map_vis = prepare_for_vis(detail_map)
+                detail_enhanced_vis = prepare_for_vis(detail_enhanced)
+                
+                for tracker in kwargs['accelerator'].trackers:
+                    if tracker.name == "tensorboard":
+                        tracker.writer.add_images("processed_frame", processed_vis[None, ...], kwargs.get('global_step', 0), dataformats="NHWC")
+                        tracker.writer.add_images("detail_map", detail_map_vis[None, ...], kwargs.get('global_step', 0), dataformats="NHWC")
+                        tracker.writer.add_images("detail_enhanced", detail_enhanced_vis[None, ...], kwargs.get('global_step', 0), dataformats="NHWC")
+                    elif tracker.name == "wandb":
+                        import wandb
+                        tracker.log({
+                            "processed_frame": wandb.Image(processed_vis, caption="Processed Frame"),
+                            "detail_map": wandb.Image(detail_map_vis, caption="Detail Map"),
+                            "detail_enhanced": wandb.Image(detail_enhanced_vis, caption="Enhanced Details")
+                        }, step=kwargs.get('global_step', 0))
+
+        return final_output
 
 
 # @MODELS.register_module()
