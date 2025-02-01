@@ -16,12 +16,17 @@ class HistoryEncoder(nn.Module):
             nn.BatchNorm3d(hidden_dim),
             nn.ReLU(),
         )
+        # 1x1x1 conv for skip connection
+        self.skip_conv = nn.Conv3d(in_channels, hidden_dim, kernel_size=1)
         self.conv2d = nn.Conv2d(hidden_dim * seq_length, 3, kernel_size=3, padding=1)
     
     def forward(self, x):
         b, c, h, w = x.shape
         x = x.view(b, self.seq_length, 3, h, w).permute(0, 2, 1, 3, 4)
-        x = self.conv3d(x)  # [b, hidden_dim, seq_length, h, w]
+        # Compute skip connection
+        skip = self.skip_conv(x)
+        # Main conv path with skip connection
+        x = self.conv3d(x) + skip
         x = x.permute(0, 2, 1, 3, 4).reshape(b, -1, h, w)
         return self.conv2d(x)
 
