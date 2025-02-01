@@ -708,6 +708,7 @@ def main(cfg: SanaConfig) -> None:
         "model_max_length": config.data.sequence_length-1,
         "seq_length": config.data.sequence_length,
         "vae": vae,
+        "accelerator": accelerator
     }
     model = build_model(
         config.model.model,
