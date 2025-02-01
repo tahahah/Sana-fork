@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 from diffusion.model.builder import MODELS
-from diffusion.model.nets.history_encoder import build_history_encoder
+from diffusion.model.nets.history_encoder3d import build_history_encoder
 from diffusion.model.nets.sana_multi_scale import SanaMS
 from diffusion.model.builder import vae_encode, vae_decode
 
@@ -50,9 +50,9 @@ class PacmanDiffusionModel(nn.Module):
         
         # Create history encoder to process raw image frames
         self.history_encoder = build_history_encoder(
-            in_channels=3 * seq_length,  
-            out_channels=3,  
-            hidden_dim=4
+            in_channels=3,  
+            seq_length=seq_length,
+            hidden_dim=64
         )
         
         # Create Sana model for diffusion with latent input channels from VAE

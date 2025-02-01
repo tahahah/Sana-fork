@@ -214,7 +214,7 @@ def log_validation(accelerator, config, model, logger, step, device, vae=None, i
         
         torch.cuda.empty_cache()
         
-        for latent in latents:
+        for idx, latent in enumerate(latents):
             print(f"Debug - latent: {latent.shape if latent is not None else None}")
             print(f"Debug - vae: {type(vae) if vae else None}")
             if vae is not None:
@@ -235,7 +235,7 @@ def log_validation(accelerator, config, model, logger, step, device, vae=None, i
             action_names = ['LEFT', 'RIGHT', 'UP', 'DOWN', 'NO_ACTION']
             action_seq = []
             for i in range(seq_len):
-                action_idx = actions[0, 0, 0, i].argmax().item()
+                action_idx = actions[idx, 0, 0, 0, i].argmax().item()
                 action_seq.append(action_names[action_idx])
             action_str = ' -> '.join(action_seq)
             
