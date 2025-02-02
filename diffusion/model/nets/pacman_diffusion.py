@@ -139,36 +139,13 @@ class PacmanDiffusionModel(nn.Module):
         processed = self.history_encoder(concat_input)  # [b, 3, h, w]
         
         # Store detail residual
-        detail_map = x - processed  # Both in pixel space
+        detail_map = obs[:, -3:, :, :]  # Both in pixel space
         
         # 3. Process through Sana and enhance details
         with torch.set_grad_enabled(True):
             base_output = self.sana(processed, timestep, y, mask=mask, data_info=data_info, **kwargs)
             detail_enhanced = self.detail_enhancer(detail_map)
             final_output = base_output + detail_enhanced
-
-            # Log intermediate states if accelerator is available
-            if 'accelerator' in kwargs:
-                # Convert tensors to images in range [0, 1] for visualization
-                def prepare_for_vis(img):
-                    return ((img[0].detach().cpu().float() + 1) / 2).clamp(0, 1).permute(1, 2, 0).numpy()
-
-                processed_vis = prepare_for_vis(processed)
-                detail_map_vis = prepare_for_vis(detail_map)
-                detail_enhanced_vis = prepare_for_vis(detail_enhanced)
-                
-                for tracker in kwargs['accelerator'].trackers:
-                    if tracker.name == "tensorboard":
-                        tracker.writer.add_images("processed_frame", processed_vis[None, ...], kwargs.get('global_step', 0), dataformats="NHWC")
-                        tracker.writer.add_images("detail_map", detail_map_vis[None, ...], kwargs.get('global_step', 0), dataformats="NHWC")
-                        tracker.writer.add_images("detail_enhanced", detail_enhanced_vis[None, ...], kwargs.get('global_step', 0), dataformats="NHWC")
-                    elif tracker.name == "wandb":
-                        import wandb
-                        tracker.log({
-                            "processed_frame": wandb.Image(processed_vis, caption="Processed Frame"),
-                            "detail_map": wandb.Image(detail_map_vis, caption="Detail Map"),
-                            "detail_enhanced": wandb.Image(detail_enhanced_vis, caption="Enhanced Details")
-                        }, step=kwargs.get('global_step', 0))
 
         return final_output
 
