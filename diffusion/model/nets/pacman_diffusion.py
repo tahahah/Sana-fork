@@ -144,7 +144,7 @@ class PacmanDiffusionModel(nn.Module):
         # 3. Process through Sana and enhance details
         with torch.set_grad_enabled(True):
             base_output = self.sana(processed, timestep, y, mask=mask, data_info=data_info, **kwargs)
-            detail_enhanced = self.detail_enhancer(detail_map)
+            detail_enhanced = self.detail_enhancer(detail_map - base_output)
             final_output = base_output + detail_enhanced
 
         return final_output
