@@ -59,7 +59,7 @@ class PacmanDiffusionModel(nn.Module):
         self.sana = SanaMS(
             input_size=input_size,
             patch_size=patch_size,
-            in_channels=3,  
+            in_channels=32,  
             hidden_size=hidden_size,
             depth=depth,
             num_heads=num_heads,
