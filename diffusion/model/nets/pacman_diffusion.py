@@ -134,20 +134,23 @@ class PacmanDiffusionModel(nn.Module):
         # print(f"- obs shape: {obs.shape}")
         # 1. Concatenate noisy frame with observation frames in pixel space
         concat_input = torch.cat([obs, x], dim=1)  # [b, 3*seq_length, h, w]
-        
         # 2. Process through history encoder to get single frame
         processed = self.history_encoder(concat_input)  # [b, 3, h, w]
         
         # Store detail residual
         detail_map = obs[:, -3:, :, :]  # Both in pixel space
         
-        # 3. Process through Sana and enhance details
-        with torch.set_grad_enabled(True):
-            base_output = self.sana(processed, timestep, y, mask=mask, data_info=data_info, **kwargs)
-            detail_enhanced = self.detail_enhancer(detail_map - base_output)
-            final_output = base_output + detail_enhanced
-
-        return final_output
+        # 3. Process through VAE, Sana, and enhance details
+        if self.vae is not None:
+            with torch.set_grad_enabled(True):  # Ensure gradients flow through VAE
+                encoded = self.vae.encode(processed)
+                latent_output = self.sana(encoded, timestep, y, mask=mask, data_info=data_info, **kwargs)
+                base_output = self.vae.decode(latent_output)
+                detail_enhanced = self.detail_enhancer(detail_map - base_output)
+                final_output = base_output + detail_enhanced
+            return final_output
+        else:
+            raise ValueError("VAE model must be provided")
 
 
 # @MODELS.register_module()

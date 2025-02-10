@@ -657,8 +657,8 @@ def main(cfg: SanaConfig) -> None:
         if getattr(config.train, "deterministic_validation", False)
         else None
     )
-    # if not config.data.load_vae_feat:
-    #     vae = get_vae(config.vae.vae_type, config.vae.vae_pretrained, accelerator.device).to(torch.float16)
+    if not config.data.load_vae_feat:
+        vae = get_vae(config.vae.vae_type, config.vae.vae_pretrained, accelerator.device).to(torch.float16)
     logger.info(f"vae type: {config.vae.vae_type}")
 
     os.makedirs(config.train.null_embed_root, exist_ok=True)
