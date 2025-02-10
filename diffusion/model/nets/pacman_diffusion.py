@@ -143,9 +143,9 @@ class PacmanDiffusionModel(nn.Module):
         # 3. Process through VAE, Sana, and enhance details
         if self.vae is not None:
             with torch.set_grad_enabled(True):  # Ensure gradients flow through VAE
-                encoded = self.vae_encode(processed)
+                encoded = self.vae.encode(processed)
                 latent_output = self.sana(encoded, timestep, y, mask=mask, data_info=data_info, **kwargs)
-                base_output = self.vae_decode(latent_output)
+                base_output = self.vae.decode(latent_output)
                 detail_enhanced = self.detail_enhancer(detail_map - base_output)
                 final_output = base_output + detail_enhanced
             return final_output
