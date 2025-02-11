@@ -84,11 +84,11 @@ class PacmanDiffusionModel(nn.Module):
         )
 
         # Add detail enhancer network
-        self.detail_enhancer = nn.Sequential(
-            nn.Conv2d(3, 32, kernel_size=3, padding=1),
-            nn.ReLU(),
-            nn.Conv2d(32, 3, kernel_size=3, padding=1)
-        )
+        # self.detail_enhancer = nn.Sequential(
+        #     nn.Conv2d(3, 32, kernel_size=3, padding=1),
+        #     nn.ReLU(),
+        #     nn.Conv2d(32, 3, kernel_size=3, padding=1)
+        # )
     
     def encode_history(self, x, obs):
         """Encode the history before adding noise.
@@ -138,7 +138,7 @@ class PacmanDiffusionModel(nn.Module):
         processed = self.history_encoder(concat_input)  # [b, 3, h, w]
         
         # Store detail residual
-        detail_map = obs[:, -3:, :, :]  # Both in pixel space
+        # detail_map = obs[:, -3:, :, :]  # Both in pixel space
         
         # 3. Process through VAE, Sana, and enhance details
         if self.vae is not None:
