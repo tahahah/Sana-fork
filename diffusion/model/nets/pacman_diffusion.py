@@ -146,8 +146,8 @@ class PacmanDiffusionModel(nn.Module):
                 encoded = self.vae.encode(processed)
                 latent_output = self.sana(encoded, timestep, y, mask=mask, data_info=data_info, **kwargs)
                 base_output = self.vae.decode(latent_output)
-                detail_enhanced = self.detail_enhancer(detail_map - base_output)
-                final_output = base_output + detail_enhanced
+                # detail_enhanced = self.detail_enhancer(detail_map - base_output)
+                final_output = base_output
             return final_output
         else:
             raise ValueError("VAE model must be provided")
