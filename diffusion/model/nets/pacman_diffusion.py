@@ -151,7 +151,7 @@ class PacmanDiffusionModel(nn.Module):
             return final_output
         else:
             latent_output = self.sana(processed, timestep, y, mask=mask, data_info=data_info, **kwargs)
-
+            return latent_output
 
 
 # @MODELS.register_module()
