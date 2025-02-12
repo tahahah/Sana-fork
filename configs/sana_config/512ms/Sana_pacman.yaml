@@ -12,7 +12,7 @@ data:
 # model config
 model:
   model: SanaMS_PACMAN_P1_D12
-  image_size: 512
+  image_size: 256
   in_channels: 3
   mixed_precision: fp16
   fp32_attention: true
