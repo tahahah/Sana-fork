@@ -150,7 +150,8 @@ class PacmanDiffusionModel(nn.Module):
                 final_output = base_output
             return final_output
         else:
-            raise ValueError("VAE model must be provided")
+            latent_output = self.sana(processed, timestep, y, mask=mask, data_info=data_info, **kwargs)
+
 
 
 # @MODELS.register_module()
