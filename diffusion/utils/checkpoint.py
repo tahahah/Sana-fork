@@ -86,7 +86,7 @@ def save_checkpoint(
         if upload_to_hub and "HF_TOKEN" in os.environ:
             try:
                 huggingface_hub.login(token=os.environ["HF_TOKEN"])
-                repo_id = "Tahahah/pacman-sana-3.2m-spatiotemporal"
+                repo_id = "Tahahah/pacman-sana-3.2m-taesd"
                 
                 try:
                     huggingface_hub.upload_file(
@@ -152,7 +152,7 @@ def load_checkpoint(
                 if "HF_TOKEN" in os.environ:
                     huggingface_hub.login(token=os.environ["HF_TOKEN"])
                     null_embed_file = huggingface_hub.hf_hub_download(
-                        repo_id="Tahahah/pacman-sana-3.2m",
+                        repo_id="Tahahah/pacman-sana-3.2m-taesd",
                         filename="pretrained_models/null_embed_diffusers_dc-ae_16.pth",
                         repo_type="model"
                     )
