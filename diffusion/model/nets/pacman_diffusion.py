@@ -59,7 +59,7 @@ class PacmanDiffusionModel(nn.Module):
         self.sana = SanaMS(
             input_size=input_size,
             patch_size=patch_size,
-            in_channels=3,  
+            in_channels=32,  
             hidden_size=hidden_size,
             depth=depth,
             num_heads=num_heads,
@@ -150,8 +150,7 @@ class PacmanDiffusionModel(nn.Module):
                 final_output = base_output
             return final_output
         else:
-            latent_output = self.sana(processed, timestep, y, mask=mask, data_info=data_info, **kwargs)
-            return latent_output
+            raise ValueError("VAE model must be provided")
 
 
 # @MODELS.register_module()
