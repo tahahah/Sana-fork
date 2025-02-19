@@ -38,8 +38,8 @@ model:
 
 # VAE setting
 vae:
-  vae_type: dc-ae
-  vae_pretrained: mit-han-lab/dc-ae-f32c32-in-1.0
+  vae_type: TAESD
+  vae_pretrained: madebyollin/taesd
   scale_factor: 0.41407
   vae_latent_dim: 32
   vae_downsample_rate: 32
