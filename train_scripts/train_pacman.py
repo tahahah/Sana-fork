@@ -214,9 +214,9 @@ def log_validation(accelerator, config, model, logger, step, device, vae=None, i
         
         torch.cuda.empty_cache()
         
-        for latent in latents:
+        for idx, latent in enumerate(latents):
             print(f"Debug - latent: {latent.shape if latent is not None else None}")
-            print(f"Debug - vae: {type(vae)}")
+            print(f"Debug - vae: {type(vae) if vae else None}")
             if vae is not None:
                 print(f"Debug - vae.cfg: {vae.cfg if hasattr(vae, 'cfg') else None}")
             
@@ -235,7 +235,7 @@ def log_validation(accelerator, config, model, logger, step, device, vae=None, i
             action_names = ['LEFT', 'RIGHT', 'UP', 'DOWN', 'NO_ACTION']
             action_seq = []
             for i in range(seq_len):
-                action_idx = actions[0, 0, 0, i].argmax().item()
+                action_idx = actions[idx, 0, 0, 0, i].argmax().item()
                 action_seq.append(action_names[action_idx])
             action_str = ' -> '.join(action_seq)
             
@@ -315,8 +315,8 @@ def log_validation(accelerator, config, model, logger, step, device, vae=None, i
             else osp.join(local_vis_save_path, f"vis_{step}_w_init.{file_format}")
         )
         concatenated_image.save(save_path)
-
-    del vae
+    if vae:
+        del vae
     torch.cuda.empty_cache()
     flush()
     return image_logs
@@ -483,8 +483,13 @@ def train(config, args, accelerator, model, optimizer, lr_scheduler, train_datal
                 accelerator.wait_for_everyone()
                 if accelerator.is_main_process:
                     os.umask(0o000)
+                    checkpoint_folder = osp.join(config.work_dir, "checkpoints")
+                    folder_size = sum(osp.getsize(osp.join(dirpath, filename)) for dirpath, _, filenames in os.walk(checkpoint_folder) for filename in filenames)
+                    if folder_size > 5 * 1024 * 1024 * 1024:  # 5GB in bytes
+                        logger.info(f"Stopping training at epoch {epoch}, step {global_step} due to checkpoint folder size exceeding 5GB.")
+                        return
                     ckpt_saved_path = save_checkpoint(
-                        osp.join(config.work_dir, "checkpoints"),
+                        checkpoint_folder,
                         epoch=epoch,
                         step=global_step,
                         model=accelerator.unwrap_model(model),
@@ -703,6 +708,7 @@ def main(cfg: SanaConfig) -> None:
         "model_max_length": config.data.sequence_length-1,
         "seq_length": config.data.sequence_length,
         "vae": vae,
+        "accelerator": accelerator
     }
     model = build_model(
         config.model.model,

@@ -94,6 +94,12 @@ def get_vae(name, model_path, device="cuda"):
         if dc_ae.cfg.scaling_factor is None:
             dc_ae.cfg.scaling_factor = 0.41407  # Default from config
         return dc_ae
+    elif "TAESD" in name:
+        from diffusers import AutoencoderTiny
+        print(colored(f"[TAESD] Loading model from {model_path}", attrs=["bold"]))
+        taesd = AutoencoderTiny.from_pretrained(model_path).to(device).eval()
+        
+        return taesd
     else:
         print("error load vae")
         exit()

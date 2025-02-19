@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 from diffusion.model.builder import MODELS
-from diffusion.model.nets.history_encoder import build_history_encoder
+from diffusion.model.nets.history_encoder3d import build_history_encoder
 from diffusion.model.nets.sana_multi_scale import SanaMS
 from diffusion.model.builder import vae_encode, vae_decode
 
@@ -11,8 +11,8 @@ class PacmanDiffusionModel(nn.Module):
     
     def __init__(
         self,
-        input_size=32,
-        in_channels=160,
+        input_size=3,
+        in_channels=15,
         patch_size=1,
         hidden_size=128,
         depth=12,
@@ -50,16 +50,16 @@ class PacmanDiffusionModel(nn.Module):
         
         # Create history encoder to process raw image frames
         self.history_encoder = build_history_encoder(
-            in_channels=3 * seq_length,  
-            out_channels=3,  
-            hidden_dim=3 * seq_length // 2  
+            in_channels=3,  
+            seq_length=seq_length,
+            hidden_dim=12
         )
         
         # Create Sana model for diffusion with latent input channels from VAE
         self.sana = SanaMS(
             input_size=input_size,
             patch_size=patch_size,
-            in_channels=32,  
+            in_channels=4,  
             hidden_size=hidden_size,
             depth=depth,
             num_heads=num_heads,
@@ -82,6 +82,13 @@ class PacmanDiffusionModel(nn.Module):
             cross_norm=cross_norm,
             **kwargs
         )
+
+        # Add detail enhancer network
+        # self.detail_enhancer = nn.Sequential(
+        #     nn.Conv2d(3, 32, kernel_size=3, padding=1),
+        #     nn.ReLU(),
+        #     nn.Conv2d(32, 3, kernel_size=3, padding=1)
+        # )
     
     def encode_history(self, x, obs):
         """Encode the history before adding noise.
@@ -127,17 +134,21 @@ class PacmanDiffusionModel(nn.Module):
         # print(f"- obs shape: {obs.shape}")
         # 1. Concatenate noisy frame with observation frames in pixel space
         concat_input = torch.cat([obs, x], dim=1)  # [b, 3*seq_length, h, w]
-        
         # 2. Process through history encoder to get single frame
         processed = self.history_encoder(concat_input)  # [b, 3, h, w]
         
-        # 3. Encode through VAE to get latents, allowing gradients to flow
+        # Store detail residual
+        # detail_map = obs[:, -3:, :, :]  # Both in pixel space
+        
+        # 3. Process through VAE, Sana, and enhance details
         if self.vae is not None:
             with torch.set_grad_enabled(True):  # Ensure gradients flow through VAE
-                encoded = self.vae.encode(processed)
+                encoded = self.vae.encoder(processed)
                 latent_output = self.sana(encoded, timestep, y, mask=mask, data_info=data_info, **kwargs)
-                pixel_output = self.vae.decode(latent_output)
-            return pixel_output
+                base_output = self.vae.decoder(latent_output).clamp(0,1)
+                # detail_enhanced = self.detail_enhancer(detail_map - base_output)
+                final_output = base_output
+            return final_output
         else:
             raise ValueError("VAE model must be provided")
 

@@ -446,7 +446,8 @@ class GaussianDiffusion:
         :param t: the value of t, starting at 0 for the first diffusion step.
         :param clip_denoised: if True, clip the x_start prediction to [-1, 1].
         :param denoised_fn: if not None, a function which applies to the
-            x_start prediction before it is used to sample.
+            x_start prediction before it is used to sample. Applies before
+            clip_denoised.
         :param cond_fn: if not None, this is a gradient function that acts
                         similarly to the model.
         :param model_kwargs: if not None, a dict of extra keyword arguments to
@@ -849,6 +850,9 @@ class GaussianDiffusion:
                     terms["mae"] = model_kwargs["mask_loss_coef"] * mean_flat(loss * mask) * mask.shape[1] / mask.sum(1)
             else:
                 terms["mse"] = mean_flat(loss)
+                # Add timestep-dependent weighting for finer details
+                t_weights = 1.0 + (1.0 / (t.float() + 1.0))  # Higher weights for lower timesteps
+                terms["mse"] = terms["mse"] * t_weights
             if "vb" in terms:
                 terms["loss"] = terms["mse"] + terms["vb"]
             else:
@@ -947,6 +951,9 @@ class GaussianDiffusion:
                 output = th.where(t > 249, pred_noise, pred_startx)
             loss = (target - output) ** 2
             terms["mse"] = mean_flat(loss)
+            # Add timestep-dependent weighting for finer details
+            t_weights = 1.0 + (1.0 / (t.float() + 1.0))  # Higher weights for lower timesteps
+            terms["mse"] = terms["mse"] * t_weights
             if "vb" in terms:
                 terms["loss"] = terms["mse"] + terms["vb"]
             else:

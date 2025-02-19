@@ -308,7 +308,7 @@ class SanaMS(Sana):
         y = self.y_embedder(y, self.training, mask=mask)  # (N, D)
         if self.y_norm:
             y = self.attention_y_norm(y)
-
+        mask = None
         if mask is not None:
             mask = mask.repeat(y.shape[0] // mask.shape[0], 1) if mask.shape[0] != y.shape[0] else mask
             mask = mask.squeeze(1).squeeze(1)

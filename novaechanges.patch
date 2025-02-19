@@ -1,0 +1,134 @@
+diff --git a/configs/sana_config/512ms/Sana_pacman.yaml b/configs/sana_config/512ms/Sana_pacman.yaml
+index 55bca6d..55610c4 100644
+--- a/configs/sana_config/512ms/Sana_pacman.yaml
++++ b/configs/sana_config/512ms/Sana_pacman.yaml
+@@ -1,7 +1,7 @@
+ data:
+   type: PacmanDataset
+   data_dir: ["datasets/pacman"]  # Update with actual path
+-  resolution: 512
++  resolution: 256
+   sequence_length: 5  # Length of action sequences
+   load_text_feat: false
+   load_vae_feat: false
+@@ -12,8 +12,8 @@ data:
+ # model config
+ model:
+   model: SanaMS_PACMAN_P1_D12
+-  image_size: 512
+-  in_channels: 160
++  image_size: 256
++  in_channels: 15
+   mixed_precision: fp16
+   fp32_attention: true
+   load_from:
+@@ -61,7 +61,7 @@ scheduler:
+ train:
+   num_workers: 1
+   seed: 1
+-  train_batch_size: 2
++  train_batch_size: 10
+   num_epochs: 100
+   gradient_accumulation_steps: 1
+   grad_checkpointing: true
+diff --git a/diffusion/data/datasets/pacman_data.py b/diffusion/data/datasets/pacman_data.py
+index b14583c..314359c 100644
+--- a/diffusion/data/datasets/pacman_data.py
++++ b/diffusion/data/datasets/pacman_data.py
+@@ -104,7 +104,7 @@ class PacmanDataset(IterableDataset):
+             self.mixed_precision = config.model.mixed_precision
+         
+         # Create blank image for padding
+-        self.blank_image = Image.new('RGB', (512, 512), 'black')
++        self.blank_image = Image.new('RGB', (self.resolution, self.resolution), 'black')
+         self._cached_blank_frame = None
+         self._cached_blank_latent = None  
+         
+@@ -124,7 +124,7 @@ class PacmanDataset(IterableDataset):
+             self.transform = transforms.Compose([
+                 transforms.Lambda(convert_to_rgb),
+                 transforms.Lambda(make_square),  # Make the image square with padding
+-                transforms.Resize(512),          # Resize to 512x512
++                transforms.Resize(self.resolution),          # Resize to 512x512
+                 transforms.functional.hflip,     # Horizontal mirror flip
+                 transforms.Lambda(rotate_90_clockwise),  # Rotate 90 degrees clockwise
+                 transforms.ToTensor(),
+diff --git a/diffusion/model/nets/pacman_diffusion.py b/diffusion/model/nets/pacman_diffusion.py
+index 56d486f..4d52295 100644
+--- a/diffusion/model/nets/pacman_diffusion.py
++++ b/diffusion/model/nets/pacman_diffusion.py
+@@ -11,8 +11,8 @@ class PacmanDiffusionModel(nn.Module):
+     
+     def __init__(
+         self,
+-        input_size=32,
+-        in_channels=160,
++        input_size=3,
++        in_channels=15,
+         patch_size=1,
+         hidden_size=128,
+         depth=12,
+@@ -59,7 +59,7 @@ class PacmanDiffusionModel(nn.Module):
+         self.sana = SanaMS(
+             input_size=input_size,
+             patch_size=patch_size,
+-            in_channels=32,  
++            in_channels=3,  
+             hidden_size=hidden_size,
+             depth=depth,
+             num_heads=num_heads,
+@@ -132,14 +132,11 @@ class PacmanDiffusionModel(nn.Module):
+         processed = self.history_encoder(concat_input)  # [b, 3, h, w]
+         
+         # 3. Encode through VAE to get latents, allowing gradients to flow
+-        if self.vae is not None:
+-            with torch.set_grad_enabled(True):  # Ensure gradients flow through VAE
+-                encoded = self.vae.encode(processed)
+-                latent_output = self.sana(encoded, timestep, y, mask=mask, data_info=data_info, **kwargs)
+-                pixel_output = self.vae.decode(latent_output)
+-            return pixel_output
+-        else:
+-            raise ValueError("VAE model must be provided")
++        with torch.set_grad_enabled(True):  # Ensure gradients flow through VAE
++            # encoded = self.vae.encode(processed)
++            pixel_output = self.sana(processed, timestep, y, mask=mask, data_info=data_info, **kwargs)
++            # pixel_output = self.vae.decode(latent_output)
++        return pixel_output
+ 
+ 
+ # @MODELS.register_module()
+diff --git a/train_scripts/train_pacman.py b/train_scripts/train_pacman.py
+index 923ff3b..f71439d 100755
+--- a/train_scripts/train_pacman.py
++++ b/train_scripts/train_pacman.py
+@@ -216,7 +216,7 @@ def log_validation(accelerator, config, model, logger, step, device, vae=None, i
+         
+         for latent in latents:
+             print(f"Debug - latent: {latent.shape if latent is not None else None}")
+-            print(f"Debug - vae: {type(vae)}")
++            print(f"Debug - vae: {type(vae) if vae else None}")
+             if vae is not None:
+                 print(f"Debug - vae.cfg: {vae.cfg if hasattr(vae, 'cfg') else None}")
+             
+@@ -315,8 +315,8 @@ def log_validation(accelerator, config, model, logger, step, device, vae=None, i
+             else osp.join(local_vis_save_path, f"vis_{step}_w_init.{file_format}")
+         )
+         concatenated_image.save(save_path)
+-
+-    del vae
++    if vae:
++        del vae
+     torch.cuda.empty_cache()
+     flush()
+     return image_logs
+@@ -652,8 +652,8 @@ def main(cfg: SanaConfig) -> None:
+         if getattr(config.train, "deterministic_validation", False)
+         else None
+     )
+-    if not config.data.load_vae_feat:
+-        vae = get_vae(config.vae.vae_type, config.vae.vae_pretrained, accelerator.device).to(torch.float16)
++    # if not config.data.load_vae_feat:
++    #     vae = get_vae(config.vae.vae_type, config.vae.vae_pretrained, accelerator.device).to(torch.float16)
+     logger.info(f"vae type: {config.vae.vae_type}")
+ 
+     os.makedirs(config.train.null_embed_root, exist_ok=True)
