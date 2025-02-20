@@ -223,7 +223,7 @@ def log_validation(accelerator, config, model, logger, step, device, vae=None, i
             latent = latent.to(torch.float16)
             samples = vae_decode(config.vae.vae_type, vae, latent)
             samples = (
-                torch.clamp(127.5 * samples + 128.0, 0, 255)
+                torch.clamp(samples * 255.0, 0, 255)
                 .permute(0, 2, 3, 1)
                 .to("cpu", dtype=torch.uint8)
                 .numpy()[0]

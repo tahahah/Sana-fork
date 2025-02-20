@@ -128,7 +128,6 @@ class PacmanDataset(IterableDataset):
                 transforms.functional.hflip,     # Horizontal mirror flip
                 transforms.Lambda(rotate_90_clockwise),  # Rotate 90 degrees clockwise
                 transforms.ToTensor(),
-                transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
                 transforms.Lambda(to_float16),  # Convert to float16
             ])
         

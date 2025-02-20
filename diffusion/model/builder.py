@@ -120,7 +120,6 @@ def vae_encode(name, vae, images, device, sample_posterior=None):
     elif "TAESD" in name:
         ae = vae
         z = ae.encoder(images.to(device))
-        z = z * ae.cfg.scaling_factor
     else:
         print("error load vae")
         exit()
