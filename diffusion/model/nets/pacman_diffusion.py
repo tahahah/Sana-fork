@@ -50,9 +50,9 @@ class PacmanDiffusionModel(nn.Module):
         
         # Create history encoder to process raw image frames
         self.history_encoder = build_history_encoder(
-            in_channels=3,  
+            in_channels=4,
             seq_length=seq_length,
-            hidden_dim=12
+            hidden_dim=(seq_length-1)*2
         )
         
         # Create Sana model for diffusion with latent input channels from VAE
