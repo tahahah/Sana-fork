@@ -145,7 +145,7 @@ def log_validation(accelerator, config, model, logger, step, device, vae=None, i
         seq_len = img.shape[1] # seq_len*32
         
         # Generate initial noise if not provided
-        z = init_z if init_z is not None else torch.randn_like(img)
+        z = torch.randn_like(img)
         # encoded_z = torch.randn([1, vae.cfg.latent_channels, img.shape[-2]//vae.cfg.latent_channels, img.shape[-1]//vae.cfg.latent_channels], device=device)
         print(f"Debug - initial z shape: {z.shape}")
         
