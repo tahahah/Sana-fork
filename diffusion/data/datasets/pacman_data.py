@@ -329,7 +329,7 @@ class PacmanDataset(IterableDataset):
         if self._cached_blank_latent is None and self.vae is not None:
             with torch.no_grad():
                 frame = self.blank_frame.unsqueeze(0).to(next(self.vae.parameters()).device)
-                self._cached_blank_latent = self.vae.encode(frame).cpu().squeeze(0)
+                self._cached_blank_latent = self.vae.encoder(frame).cpu().squeeze(0)
         return self._cached_blank_latent
 
     def _process_sequences(self):
