@@ -129,9 +129,9 @@ class PacmanDiffusionModel(nn.Module):
         if obs is None:
             raise ValueError("obs must be provided for history encoding")
         
-        
-        # print(f"- x shape: {x.shape}")
-        # print(f"- obs shape: {obs.shape}")
+        print(f"DEBUG from forward function - start")
+        print(f"- x shape: {x.shape}")
+        print(f"- obs shape: {obs.shape}")
         # 1. Concatenate noisy frame with observation frames in pixel space
         concat_input = torch.cat([obs, x], dim=1)  # [b, 3*seq_length, h, w]
         # 2. Process through history encoder to get single frame
