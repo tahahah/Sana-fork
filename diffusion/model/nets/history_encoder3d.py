@@ -22,7 +22,7 @@ class HistoryEncoder(nn.Module):
     
     def forward(self, x):
         b, c, h, w = x.shape
-        x = x.view(b, self.seq_length, 3, h, w).permute(0, 2, 1, 3, 4)
+        x = x.view(b, self.seq_length, c//self.seq_length, h, w).permute(0, 2, 1, 3, 4)
         # Compute skip connection
         skip = self.skip_conv(x)
         # Main conv path with skip connection
