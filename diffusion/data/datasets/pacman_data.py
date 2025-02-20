@@ -300,7 +300,7 @@ class PacmanDataset(IterableDataset):
                     enabled=(self.mixed_precision == "fp16" or self.mixed_precision == "bf16"),
                 ):
                     frame = frame.unsqueeze(0).to(device)  # Add batch dimension
-                    latent = self.vae.encode(frame).cpu()  # Direct encoding without sampling
+                    latent = self.vae.encoder(frame).cpu()  # Direct encoding without sampling
                     
                     # Cache the result
                     self._encoded_frames_cache[frame_hash] = latent.squeeze(0)
