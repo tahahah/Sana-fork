@@ -18,7 +18,7 @@ class HistoryEncoder(nn.Module):
         )
         # 1x1x1 conv for skip connection
         self.skip_conv = nn.Conv3d(in_channels, hidden_dim, kernel_size=1)
-        self.conv2d = nn.Conv2d(hidden_dim * seq_length, 3, kernel_size=3, padding=1)
+        self.conv2d = nn.Conv2d(hidden_dim * seq_length, in_channels, kernel_size=3, padding=1)
     
     def forward(self, x):
         b, c, h, w = x.shape
