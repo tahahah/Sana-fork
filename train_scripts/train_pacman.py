@@ -72,7 +72,7 @@ def log_validation(accelerator, config, model, logger, step, device, vae=None, i
     
     # Initialize validation dataset and dataloader if not already done
     if val_dataset is None:
-        val_dataset = build_dataset(asdict(config.data), resolution=image_size, aspect_ratio_type=config.model.aspect_ratio_type, vae_downsample_rate=config.vae.vae_downsample_rate, vae=None)
+        val_dataset = build_dataset(asdict(config.data), resolution=image_size, aspect_ratio_type=config.model.aspect_ratio_type, vae_downsample_rate=config.vae.vae_downsample_rate, vae=vae)
         val_dataloader = torch.utils.data.DataLoader(
             val_dataset,
             batch_size=config.train.train_batch_size,
