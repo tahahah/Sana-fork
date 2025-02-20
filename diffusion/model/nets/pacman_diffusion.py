@@ -141,16 +141,8 @@ class PacmanDiffusionModel(nn.Module):
         # detail_map = obs[:, -3:, :, :]  # Both in pixel space
         
         # 3. Process through VAE, Sana, and enhance details
-        if self.vae is not None:
-            with torch.set_grad_enabled(True):  # Ensure gradients flow through VAE
-                encoded = self.vae.encoder(processed)
-                latent_output = self.sana(encoded, timestep, y, mask=mask, data_info=data_info, **kwargs)
-                base_output = self.vae.decoder(latent_output).clamp(0,1)
-                # detail_enhanced = self.detail_enhancer(detail_map - base_output)
-                final_output = base_output
-            return final_output
-        else:
-            raise ValueError("VAE model must be provided")
+        latent_output = self.sana(processed, timestep, y, mask=mask, data_info=data_info, **kwargs)
+        return latent_output
 
 
 # @MODELS.register_module()

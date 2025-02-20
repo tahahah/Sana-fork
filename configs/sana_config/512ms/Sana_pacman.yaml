@@ -12,7 +12,7 @@ data:
 # model config
 model:
   model: SanaMS_PACMAN_P1_D12
-  image_size: 256
+  image_size: 512
   in_channels: 3
   mixed_precision: fp16
   fp32_attention: true
@@ -41,8 +41,8 @@ vae:
   vae_type: TAESD
   vae_pretrained: madebyollin/taesd
   scale_factor: 0.41407
-  vae_latent_dim: 32
-  vae_downsample_rate: 32
+  vae_latent_dim: 4
+  vae_downsample_rate: 8
   sample_posterior: true
 # Sana schedule Flow
 scheduler:

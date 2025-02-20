@@ -114,11 +114,11 @@ def log_validation(accelerator, config, model, logger, step, device, vae=None, i
     image_logs = []
 
     # Initialize VAE if not provided
-    # if vae is None:
-    #     vae = get_vae(config.vae.vae_type, config.vae.vae_pretrained, accelerator.device).to(torch.float16)
-    #     # Set scaling factor from config
-    #     if hasattr(vae, 'cfg') and vae.cfg.scaling_factor is None:
-    #         vae.cfg.scaling_factor = config.vae.scale_factor
+    if vae is None:
+        vae = get_vae(config.vae.vae_type, config.vae.vae_pretrained, accelerator.device).to(torch.float16)
+        # Set scaling factor from config
+        if hasattr(vae, 'cfg') and vae.cfg.scaling_factor is None:
+            vae.cfg.scaling_factor = config.vae.scale_factor
 
     def run_sampling(init_z=None, label_suffix="", vae=None, sampler="dpm-solver"):
         latents = []
@@ -146,7 +146,7 @@ def log_validation(accelerator, config, model, logger, step, device, vae=None, i
         
         # Generate initial noise if not provided
         z = init_z if init_z is not None else torch.randn_like(img)
-        # encoded z = torch.randn([1, vae.cfg.latent_channels, img.shape[-2]//vae.cfg.latent_channels, img.shape[-1]//vae.cfg.latent_channels], device=device)
+        # encoded_z = torch.randn([1, vae.cfg.latent_channels, img.shape[-2]//vae.cfg.latent_channels, img.shape[-1]//vae.cfg.latent_channels], device=device)
         print(f"Debug - initial z shape: {z.shape}")
         
         # Base model kwargs for the shape info and observations
@@ -221,7 +221,7 @@ def log_validation(accelerator, config, model, logger, step, device, vae=None, i
                 print(f"Debug - vae.cfg: {vae.cfg if hasattr(vae, 'cfg') else None}")
             
             latent = latent.to(torch.float16)
-            # samples = vae_decode(config.vae.vae_type, vae, latent)
+            samples = vae_decode(config.vae.vae_type, vae, latent)
             samples = (
                 torch.clamp(127.5 * latent + 128.0, 0, 255)
                 .permute(0, 2, 3, 1)
@@ -755,7 +755,7 @@ def main(cfg: SanaConfig) -> None:
         resolution=image_size,
         aspect_ratio_type=config.model.aspect_ratio_type,
         vae_downsample_rate=config.vae.vae_downsample_rate,
-        vae=None,  # Pass VAE model to dataset
+        vae=vae,  # Pass VAE model to dataset
     )
     accelerator.wait_for_everyone()
 

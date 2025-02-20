@@ -117,6 +117,10 @@ def vae_encode(name, vae, images, device, sample_posterior=None):
         ae = vae
         z = ae.encode(images.to(device))
         z = z * ae.cfg.scaling_factor
+    elif "TAESD" in name:
+        ae = vae
+        z = ae.encoder(images.to(device))
+        z = z * ae.cfg.scaling_factor
     else:
         print("error load vae")
         exit()
@@ -130,6 +134,9 @@ def vae_decode(name, vae, latent):
     elif "dc-ae" in name:
         ae = vae
         samples = ae.decode(latent.detach() / ae.cfg.scaling_factor)
+    elif "TAESD" in name:
+        ae = vae
+        samples = ae.decoder(latent.detach()).clamp(0, 1)
     else:
         print("error load vae")
         exit()
