@@ -57,7 +57,7 @@ def save_checkpoint(
             state_dict["epoch"] = epoch
             file_path = os.path.join(work_dir, f"epoch_{epoch}.pth")
             if step is not None:
-                file_path = file_path.split(".pth")[0] + f"_step_{step}.pth"
+                file_path = file_path.split(".pth")[0] + f"_step_{step}_experimentalLoss.pth"
 
         rng_state = {
             "torch": torch.get_rng_state(),
@@ -77,7 +77,7 @@ def save_checkpoint(
                 if os.path.exists(previous_ckgt):
                     os.remove(previous_ckgt)
         if add_symlink:
-            link_path = os.path.join(os.path.dirname(file_path), "latest.pth")
+            link_path = os.path.join(os.path.dirname(file_path), "latest_experimentalLoss.pth")
             if os.path.exists(link_path) or os.path.islink(link_path):
                 os.remove(link_path)
             os.symlink(os.path.abspath(file_path), link_path)
