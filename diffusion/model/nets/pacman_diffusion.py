@@ -139,7 +139,7 @@ class PacmanDiffusionModel(nn.Module):
         
         # Store detail residual
         supporting_input = obs[:, -4:, :, :] # Pass in the last frame along with processed to Sana
-        processed = torch.cat([processed, supporting_input], dim=1)
+        processed = processed + supporting_input
         
         # 3. Process through VAE, Sana, and enhance details
         latent_output = self.sana(processed, timestep, y, mask=mask, data_info=data_info, **kwargs)
