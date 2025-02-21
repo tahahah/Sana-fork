@@ -313,7 +313,7 @@ class GaussianDiffusion:
         :param model: the model, which takes a signal and a batch of timesteps
                       as input.
         :param x: the [N x C x ...] tensor at time t.
-        :param t: a 1-D Tensor of timesteps.
+        :param t: the value of t, starting at 0 for the first diffusion step.
         :param clip_denoised: if True, clip the denoised signal into [-1, 1].
         :param denoised_fn: if not None, a function which applies to the
             x_start prediction before it is used to sample. Applies before
@@ -839,7 +839,19 @@ class GaussianDiffusion:
                 # best
                 target = th.where(t > 249, noise, x_start)
                 output = th.where(t > 249, pred_noise, pred_startx)
-            loss = -((target - output) ** 2) + 1
+            
+            # Modified loss calculation to be more sensitive to smaller errors
+            diff = target - output
+            # Use a smooth L1 + L2 loss combination
+            # For small errors (< 1), behave more like L1 loss
+            # For large errors (> 1), behave more like L2 loss
+            abs_diff = th.abs(diff)
+            quadratic_mask = abs_diff < 1.0
+            # Smooth transition between L1 and L2
+            loss = th.where(quadratic_mask,
+                          0.5 * diff * diff,  # L2 loss for small errors
+                          abs_diff - 0.5)     # L1 loss for large errors
+
             if model_kwargs.get("mask_ratio", False) and model_kwargs["mask_ratio"] > 0:
                 assert "mask" in model_output
                 loss = F.avg_pool2d(loss.mean(dim=1), model.model.module.patch_size).flatten(1)
@@ -949,11 +961,32 @@ class GaussianDiffusion:
                 # best
                 target = th.where(t > 249, noise, x_start)
                 output = th.where(t > 249, pred_noise, pred_startx)
-            loss = (target - output) ** 2
-            terms["mse"] = mean_flat(loss)
-            # Add timestep-dependent weighting for finer details
-            t_weights = 1.0 + (1.0 / (t.float() + 1.0))  # Higher weights for lower timesteps
-            terms["mse"] = terms["mse"] * t_weights
+            
+            # Modified loss calculation to be more sensitive to smaller errors
+            diff = target - output
+            # Use a smooth L1 + L2 loss combination
+            # For small errors (< 1), behave more like L1 loss
+            # For large errors (> 1), behave more like L2 loss
+            abs_diff = th.abs(diff)
+            quadratic_mask = abs_diff < 1.0
+            # Smooth transition between L1 and L2
+            loss = th.where(quadratic_mask,
+                          0.5 * diff * diff,  # L2 loss for small errors
+                          abs_diff - 0.5)     # L1 loss for large errors
+
+            if model_kwargs.get("mask_ratio", False) and model_kwargs["mask_ratio"] > 0:
+                assert "mask" in model_output
+                loss = F.avg_pool2d(loss.mean(dim=1), model.model.module.patch_size).flatten(1)
+                mask = model_output["mask"]
+                unmask = 1 - mask
+                terms["mse"] = mean_flat(loss * unmask) * unmask.shape[1] / unmask.sum(1)
+                if model_kwargs["mask_loss_coef"] > 0:
+                    terms["mae"] = model_kwargs["mask_loss_coef"] * mean_flat(loss * mask) * mask.shape[1] / mask.sum(1)
+            else:
+                terms["mse"] = mean_flat(loss)
+                # Add timestep-dependent weighting for finer details
+                t_weights = 1.0 + (1.0 / (t.float() + 1.0))  # Higher weights for lower timesteps
+                terms["mse"] = terms["mse"] * t_weights
             if "vb" in terms:
                 terms["loss"] = terms["mse"] + terms["vb"]
             else:
