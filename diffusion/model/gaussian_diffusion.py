@@ -337,9 +337,24 @@ class GaussianDiffusion:
         else:
             extra = None
 
-        if self.model_var_type in [ModelVarType.LEARNED, ModelVarType.LEARNED_RANGE]:
-            assert model_output.shape == (B, C * 2, *x.shape[2:])
-            model_output, model_var_values = th.split(model_output, C, dim=1)
+        if isinstance(model_output, dict) and model_output.get("x", None) is not None:
+            output = model_output["x"]
+        else:
+            output = model_output
+
+        if self.return_startx and self.model_mean_type == ModelMeanType.EPSILON:
+            B, C = x.shape[:2]
+            assert output.shape == (B, C * 2, *x.shape[2:])
+            output = th.split(output, C, dim=1)[0]
+            return output, self._predict_xstart_from_eps(x_t=x, t=t, eps=output), x
+
+        if self.model_var_type in [
+            ModelVarType.LEARNED,
+            ModelVarType.LEARNED_RANGE,
+        ]:
+            B, C = x.shape[:2]
+            assert output.shape == (B, C * 2, *x.shape[2:])
+            output, model_var_values = th.split(output, C, dim=1)
             min_log = _extract_into_tensor(self.posterior_log_variance_clipped, t, x.shape)
             max_log = _extract_into_tensor(np.log(self.betas), t, x.shape)
             # The model_var_values is [-1, 1] for [min_var, max_var].
@@ -362,8 +377,8 @@ class GaussianDiffusion:
             model_variance = _extract_into_tensor(model_variance, t, x.shape)
             model_log_variance = _extract_into_tensor(model_log_variance, t, x.shape)
         else:
-            model_variance = th.zeros_like(model_output)
-            model_log_variance = th.zeros_like(model_output)
+            model_variance = th.zeros_like(output)
+            model_log_variance = th.zeros_like(output)
 
         def process_xstart(x):
             if denoised_fn is not None:
@@ -373,9 +388,9 @@ class GaussianDiffusion:
             return x
 
         if self.model_mean_type == ModelMeanType.START_X:
-            pred_xstart = process_xstart(model_output)
+            pred_xstart = process_xstart(output)
         else:
-            pred_xstart = process_xstart(self._predict_xstart_from_eps(x_t=x, t=t, eps=model_output))
+            pred_xstart = process_xstart(self._predict_xstart_from_eps(x_t=x, t=t, eps=output))
         model_mean, _, _ = self.q_posterior_mean_variance(x_start=pred_xstart, x_t=x, t=t)
 
         assert model_mean.shape == model_log_variance.shape == pred_xstart.shape == x.shape
@@ -786,6 +801,11 @@ class GaussianDiffusion:
                 terms["loss"] *= self.num_timesteps
         elif self.loss_type == LossType.MSE or self.loss_type == LossType.RESCALED_MSE:
             model_output = model(x_t, t, **model_kwargs)
+            if isinstance(model_output, tuple):
+                model_output, extra = model_output
+            else:
+                extra = None
+
             if isinstance(model_output, dict) and model_output.get("x", None) is not None:
                 output = model_output["x"]
             else:
@@ -840,17 +860,13 @@ class GaussianDiffusion:
                 target = th.where(t > 249, noise, x_start)
                 output = th.where(t > 249, pred_noise, pred_startx)
             
-            # Modified loss calculation to be more sensitive to smaller errors
             diff = target - output
-            # Use a smooth L1 + L2 loss combination
-            # For small errors (< 1), behave more like L1 loss
-            # For large errors (> 1), behave more like L2 loss
+            # Increase sensitivity to small errors by using higher power for small differences
             abs_diff = th.abs(diff)
-            quadratic_mask = abs_diff < 1.0
-            # Smooth transition between L1 and L2
-            loss = th.where(quadratic_mask,
-                          0.5 * diff * diff,  # L2 loss for small errors
-                          abs_diff - 0.5)     # L1 loss for large errors
+            small_error_mask = abs_diff < 0.1
+            loss = th.where(small_error_mask,
+                          4.0 * diff * diff,  # Increased weight for very small errors
+                          diff * diff)        # Regular MSE for larger errors
 
             if model_kwargs.get("mask_ratio", False) and model_kwargs["mask_ratio"] > 0:
                 assert "mask" in model_output
@@ -914,6 +930,11 @@ class GaussianDiffusion:
         elif self.loss_type == LossType.MSE or self.loss_type == LossType.RESCALED_MSE:
             output = model(x_t, timestep=t, **model_kwargs, return_dict=False)[0]
 
+            if isinstance(output, dict) and output.get("x", None) is not None:
+                output = output["x"]
+            else:
+                output = output
+
             if self.return_startx and self.model_mean_type == ModelMeanType.EPSILON:
                 B, C = x_t.shape[:2]
                 assert output.shape == (B, C * 2, *x_t.shape[2:])
@@ -962,17 +983,13 @@ class GaussianDiffusion:
                 target = th.where(t > 249, noise, x_start)
                 output = th.where(t > 249, pred_noise, pred_startx)
             
-            # Modified loss calculation to be more sensitive to smaller errors
             diff = target - output
-            # Use a smooth L1 + L2 loss combination
-            # For small errors (< 1), behave more like L1 loss
-            # For large errors (> 1), behave more like L2 loss
+            # Increase sensitivity to small errors by using higher power for small differences
             abs_diff = th.abs(diff)
-            quadratic_mask = abs_diff < 1.0
-            # Smooth transition between L1 and L2
-            loss = th.where(quadratic_mask,
-                          0.5 * diff * diff,  # L2 loss for small errors
-                          abs_diff - 0.5)     # L1 loss for large errors
+            small_error_mask = abs_diff < 0.1
+            loss = th.where(small_error_mask,
+                          4.0 * diff * diff,  # Increased weight for very small errors
+                          diff * diff)        # Regular MSE for larger errors
 
             if model_kwargs.get("mask_ratio", False) and model_kwargs["mask_ratio"] > 0:
                 assert "mask" in model_output
@@ -1046,7 +1063,6 @@ class GaussianDiffusion:
                     x_t=x_t,
                     t=t_batch,
                     clip_denoised=clip_denoised,
-                    model_kwargs=model_kwargs,
                 )
             vb.append(out["output"])
             xstart_mse.append(mean_flat((out["pred_xstart"] - x_start) ** 2))
