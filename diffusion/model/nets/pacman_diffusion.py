@@ -59,7 +59,7 @@ class PacmanDiffusionModel(nn.Module):
         self.sana = SanaMS(
             input_size=input_size,
             patch_size=patch_size,
-            in_channels=4,  
+            in_channels=4*2,
             hidden_size=hidden_size,
             depth=depth,
             num_heads=num_heads,
@@ -138,7 +138,8 @@ class PacmanDiffusionModel(nn.Module):
         processed = self.history_encoder(concat_input)  # [b, 3, h, w]
         
         # Store detail residual
-        # detail_map = obs[:, -3:, :, :]  # Both in pixel space
+        supporting_input = obs[:, -4:, :, :] # Pass in the last frame along with processed to Sana
+        processed = torch.cat([processed, supporting_input], dim=1)
         
         # 3. Process through VAE, Sana, and enhance details
         latent_output = self.sana(processed, timestep, y, mask=mask, data_info=data_info, **kwargs)
