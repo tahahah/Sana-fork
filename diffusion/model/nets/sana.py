@@ -208,7 +208,7 @@ class Sana(nn.Module):
         super().__init__()
         self.pred_sigma = pred_sigma
         self.in_channels = in_channels
-        self.out_channels = in_channels * 2 if pred_sigma else in_channels
+        self.out_channels = in_channels * 2 if pred_sigma else in_channels//2 # TODO: fix this once done experimenting
         self.patch_size = patch_size
         self.num_heads = num_heads
         self.pe_interpolation = pe_interpolation
