@@ -212,8 +212,13 @@ class PacmanDataset(IterableDataset):
         # Reshape actions to match model's expected input shape: [1, seq_len, 5]
         actions = actions.unsqueeze(0)  # Add batch dimension
         
+        # Add noise to observation frames
+        obs_frames = frames[:-C, :, :]  # Get observation frames
+        noise = torch.randn_like(obs_frames)
+        noisy_obs = obs_frames + 0.3 * torch.rand(1).item() * noise  # Additive noise with random scaling
+        
         return {
-            'obs': frames[:-C, : , :],  # [(seq_len-1)*C, H, W]
+            'obs': noisy_obs,  # [(seq_len-1)*C, H, W] with noise
             'img': frames[-C:, :, :],   # [C, H, W] 
             'y': actions[:, :-1, :],  # [1, seq_len-1, 5]
             'y_mask': torch.ones(1, actions.shape[1] - 1),  # [1, seq_len-1]

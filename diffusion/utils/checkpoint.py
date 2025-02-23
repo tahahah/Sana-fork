@@ -86,7 +86,7 @@ def save_checkpoint(
         if upload_to_hub and "HF_TOKEN" in os.environ:
             try:
                 huggingface_hub.login(token=os.environ["HF_TOKEN"])
-                repo_id = "Tahahah/pacman-sana-3.2m-taesd"
+                repo_id = "Tahahah/pacman-sana-3.2m-taesd-driftfix"
                 
                 try:
                     huggingface_hub.upload_file(
