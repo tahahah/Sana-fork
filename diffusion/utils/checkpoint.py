@@ -57,7 +57,7 @@ def save_checkpoint(
             state_dict["epoch"] = epoch
             file_path = os.path.join(work_dir, f"epoch_{epoch}.pth")
             if step is not None:
-                file_path = file_path.split(".pth")[0] + f"_step_{step}.pth"
+                file_path = file_path.split(".pth")[0] + f"driftfix_step_{step}.pth"
 
         rng_state = {
             "torch": torch.get_rng_state(),
