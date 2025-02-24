@@ -2,7 +2,7 @@ data:
   type: PacmanDataset
   data_dir: ["datasets/pacman"]  # Update with actual path
   resolution: 512
-  sequence_length: 2  # Length of action sequences
+  sequence_length: 5  # Length of action sequences
   load_text_feat: false
   load_vae_feat: false
   transform: default_train
