@@ -6,8 +6,8 @@ data:
   load_text_feat: false
   load_vae_feat: false
   transform: default_train
-  buffer_size: 50
-  prefetch_factor: 2
+  buffer_size: 500
+  prefetch_factor: 10
   sort_dataset: false
 # model config
 model:
