@@ -61,7 +61,7 @@ scheduler:
 train:
   num_workers: 1
   seed: 1
-  train_batch_size: 100
+  train_batch_size: 80
   num_epochs: 100
   gradient_accumulation_steps: 1
   grad_checkpointing: true
