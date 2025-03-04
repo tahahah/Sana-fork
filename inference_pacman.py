@@ -14,6 +14,7 @@ from diffusion.data.datasets.pacman_data import convert_to_rgb, make_square, rot
 import pyrallis
 from pathlib import Path
 from dataclasses import dataclass
+from diffusion.utils.misc import read_config
 
 # Constants
 FPS = 10  # Target FPS
@@ -29,6 +30,7 @@ ACTION_MAP = {
 
 @dataclass
 class InferenceArgs:
+    config: str = "configs/sana_config/512ms/Sana_pacman.yaml"
     checkpoint: str = None
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
     image: str = "scripts/image.jpg"
@@ -252,13 +254,16 @@ def run_pacman_inference(config, args):
     # Clean up
     pygame.quit()
 
-@pyrallis.wrap()
-def main(cfg: SanaConfig) -> None:
-    # Parse additional arguments
+def main():
+    # Parse arguments
     args = pyrallis.parse(InferenceArgs)
     
+    # Load the config file using the utility function
+    print(f"Loading config from {args.config}")
+    config = read_config(args.config)
+    
     # Run inference
-    run_pacman_inference(cfg, args)
+    run_pacman_inference(config, args)
 
 if __name__ == "__main__":
     main()
