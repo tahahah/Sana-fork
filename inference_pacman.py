@@ -13,6 +13,7 @@ from diffusion.utils.checkpoint import load_checkpoint
 from diffusion.data.datasets.pacman_data import convert_to_rgb, make_square, rotate_90_clockwise, to_float16
 import pyrallis
 from pathlib import Path
+from dataclasses import dataclass
 
 # Constants
 FPS = 10  # Target FPS
@@ -26,13 +27,17 @@ ACTION_MAP = {
     None: 4             # NO_ACTION
 }
 
-def setup_model(config_path, checkpoint_path=None, device='cuda'):
+@dataclass
+class InferenceConfig:
+    config_path: str = "configs/sana_config/512ms/Sana_pacman.yaml"
+    checkpoint: str = None
+    device: str = "cuda" if torch.cuda.is_available() else "cpu"
+    image: str = "scripts/image.jpg"
+
+def setup_model(config, checkpoint_path=None, device='cuda'):
     """
     Set up the model from config and checkpoint
     """
-    print(f"Loading config from {config_path}")
-    config = pyrallis.parse(SanaConfig, Path(config_path))
-    
     # Set up model
     print("Building model...")
     model = build_model(config.model)
@@ -108,19 +113,19 @@ def one_hot_encode(action, num_classes=5):
     vector[action] = 1.0
     return vector
 
-def run_pacman_inference(config_path, checkpoint_path=None, device='cuda', image_path='scripts/image.jpg'):
+def run_pacman_inference(config, checkpoint_path=None, device='cuda', image_path='scripts/image.jpg'):
     """
     Run Pacman model inference loop
     """
     # Set up PyGame for visualization and input handling
     pygame.init()
-    resolution = 512  # Default resolution
+    resolution = config.model.image_size  # Use resolution from config
     window = pygame.display.set_mode((resolution, resolution))
     pygame.display.set_caption("Pacman Model Inference")
     clock = pygame.time.Clock()
     
     # Set up model and VAE
-    model, vae, config = setup_model(config_path, checkpoint_path, device)
+    model, vae, config = setup_model(config, checkpoint_path, device)
     
     # Initial frame setup
     seq_len = config.data.sequence_length
@@ -249,39 +254,16 @@ def run_pacman_inference(config_path, checkpoint_path=None, device='cuda', image
     pygame.quit()
 
 if __name__ == "__main__":
-    import argparse
+    # Parse arguments using pyrallis
+    inference_cfg = pyrallis.parse(InferenceConfig)
     
-    parser = argparse.ArgumentParser(description="Run Pacman model inference")
-    parser.add_argument(
-        "--config", 
-        type=str, 
-        default="configs/sana_config/512ms/Sana_pacman.yaml",
-        help="Path to model config file"
-    )
-    parser.add_argument(
-        "--checkpoint", 
-        type=str, 
-        default=None,
-        help="Path to model checkpoint"
-    )
-    parser.add_argument(
-        "--device", 
-        type=str, 
-        default="cuda" if torch.cuda.is_available() else "cpu",
-        help="Device to run model on"
-    )
-    parser.add_argument(
-        "--image", 
-        type=str, 
-        default="scripts/image.jpg",
-        help="Path to initial image"
-    )
-    
-    args = parser.parse_args()
+    # Load the model config
+    print(f"Loading config from {inference_cfg.config_path}")
+    config = pyrallis.parse(SanaConfig, Path(inference_cfg.config_path))
     
     run_pacman_inference(
-        config_path=args.config,
-        checkpoint_path=args.checkpoint,
-        device=args.device,
-        image_path=args.image
+        config=config,
+        checkpoint_path=inference_cfg.checkpoint,
+        device=inference_cfg.device,
+        image_path=inference_cfg.image
     )
