@@ -28,8 +28,7 @@ ACTION_MAP = {
 }
 
 @dataclass
-class InferenceConfig:
-    config_path: str = "configs/sana_config/512ms/Sana_pacman.yaml"
+class InferenceArgs:
     checkpoint: str = None
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
     image: str = "scripts/image.jpg"
@@ -113,7 +112,7 @@ def one_hot_encode(action, num_classes=5):
     vector[action] = 1.0
     return vector
 
-def run_pacman_inference(config, checkpoint_path=None, device='cuda', image_path='scripts/image.jpg'):
+def run_pacman_inference(config, args):
     """
     Run Pacman model inference loop
     """
@@ -125,24 +124,24 @@ def run_pacman_inference(config, checkpoint_path=None, device='cuda', image_path
     clock = pygame.time.Clock()
     
     # Set up model and VAE
-    model, vae, config = setup_model(config, checkpoint_path, device)
+    model, vae, config = setup_model(config, args.checkpoint, args.device)
     
     # Initial frame setup
     seq_len = config.data.sequence_length
     print(f"Using sequence length: {seq_len}")
     
     # Create blank (black) frames for initial sequence
-    blank_frame = torch.zeros((3, resolution, resolution), dtype=torch.float16, device=device)
+    blank_frame = torch.zeros((3, resolution, resolution), dtype=torch.float16, device=args.device)
     
     # Load the initial frame
-    initial_frame = load_initial_frame(image_path, resolution=resolution)
-    initial_frame = initial_frame.to(device)
+    initial_frame = load_initial_frame(args.image, resolution=resolution)
+    initial_frame = initial_frame.to(args.device)
     
     # Set up initial sequence with black frames + initial frame
     frames = [blank_frame] * (seq_len - 1) + [initial_frame]
     
     # Set up actions (initially all NO_ACTION)
-    actions = [one_hot_encode(4).to(device)] * (seq_len - 1)  # No action for all initial frames
+    actions = [one_hot_encode(4).to(args.device)] * (seq_len - 1)  # No action for all initial frames
     
     # Set up initial input tensors for model
     frames_tensor = torch.stack(frames)  # [seq_len, C, H, W]
@@ -168,7 +167,7 @@ def run_pacman_inference(config, checkpoint_path=None, device='cuda', image_path
                     current_action = 4  # NO_ACTION when key is released
         
         # Add current action to actions list and remove oldest
-        actions.append(one_hot_encode(current_action).to(device))
+        actions.append(one_hot_encode(current_action).to(args.device))
         actions = actions[1:]
         
         # Prepare inputs for model
@@ -185,18 +184,18 @@ def run_pacman_inference(config, checkpoint_path=None, device='cuda', image_path
         
         # 4. Set up actions tensor for model
         actions_tensor = torch.stack(actions).unsqueeze(0)  # [1, seq_len-1, 5]
-        action_masks = torch.ones(1, seq_len-1, device=device)  # [1, seq_len-1]
+        action_masks = torch.ones(1, seq_len-1, device=args.device)  # [1, seq_len-1]
         
         # 5. Generate noise for denoising
         z = torch.randn_like(img.unsqueeze(0))  # [1, C, H, W]
         
         # 6. Set up model kwargs
-        hw = torch.tensor([[resolution, resolution]], dtype=torch.float, device=device)
-        ar = torch.tensor([[1.0]], device=device)
+        hw = torch.tensor([[resolution, resolution]], dtype=torch.float, device=args.device)
+        ar = torch.tensor([[1.0]], device=args.device)
         
         # Null action for classifier-free guidance
-        null_action = torch.zeros(1, 1, seq_len-1, 5, device=device)
-        null_action_mask = torch.ones(1, seq_len-1, device=device)
+        null_action = torch.zeros(1, 1, seq_len-1, 5, device=args.device)
+        null_action_mask = torch.ones(1, seq_len-1, device=args.device)
         
         model_kwargs = {
             'data_info': {'img_hw': hw, 'aspect_ratio': ar},
@@ -245,7 +244,7 @@ def run_pacman_inference(config, checkpoint_path=None, device='cuda', image_path
         # Update frames for next iteration
         frames.append(output_frame.cpu())
         frames = frames[1:]
-        frames_tensor = torch.stack(frames).to(device)
+        frames_tensor = torch.stack(frames).to(args.device)
         
         # Cap the framerate
         clock.tick(FPS)
@@ -253,17 +252,13 @@ def run_pacman_inference(config, checkpoint_path=None, device='cuda', image_path
     # Clean up
     pygame.quit()
 
+@pyrallis.wrap()
+def main(cfg: SanaConfig) -> None:
+    # Parse additional arguments
+    args = pyrallis.parse(InferenceArgs)
+    
+    # Run inference
+    run_pacman_inference(cfg, args)
+
 if __name__ == "__main__":
-    # Parse arguments using pyrallis
-    inference_cfg = pyrallis.parse(InferenceConfig)
-    
-    # Load the model config
-    print(f"Loading config from {inference_cfg.config_path}")
-    config = pyrallis.parse(SanaConfig, Path(inference_cfg.config_path))
-    
-    run_pacman_inference(
-        config=config,
-        checkpoint_path=inference_cfg.checkpoint,
-        device=inference_cfg.device,
-        image_path=inference_cfg.image
-    )
+    main()
