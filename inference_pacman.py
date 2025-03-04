@@ -36,7 +36,7 @@ class InferenceArgs:
     image: str = "scripts/image.jpg"
     debug: bool = False
 
-def setup_model(config, checkpoint_path=None, device='cuda'):
+def setup_model(config, checkpoint_path=None, device='cuda', debug=False):
     """
     Set up the model from config and checkpoint
     """
@@ -52,7 +52,14 @@ def setup_model(config, checkpoint_path=None, device='cuda'):
     # Explicitly set the sequence length to match what's in the config
     model_config['seq_length'] = config.data.sequence_length
     
+    if debug:
+        print(f"Model config: {model_config}")
+    
     model = build_model(model_config)
+    
+    if debug:
+        print(f"Model structure:")
+        print(model)
     
     # Load checkpoint if provided
     if checkpoint_path:
@@ -79,6 +86,11 @@ def setup_model(config, checkpoint_path=None, device='cuda'):
     
     # Move model to device and eval mode
     model = model.to(device)
+    
+    # Convert model to fp16 to match input tensors
+    if config.model.mixed_precision == 'fp16':
+        model = model.to(torch.float16)
+    
     model.eval()
     
     return model, vae, config
@@ -94,18 +106,18 @@ def load_initial_frame(image_path, resolution=512):
         transforms.functional.hflip,
         transforms.Lambda(rotate_90_clockwise),
         transforms.ToTensor(),
-        transforms.Lambda(to_float16),
+        # Don't convert to float16 here, we'll handle precision in the main function
     ])
     
     # Load the image
     try:
         image = Image.open(image_path)
         transformed_image = transform(image)
-        return transformed_image
+        return transformed_image  # Return as float32 tensor
     except FileNotFoundError:
         print(f"Warning: Image file {image_path} not found. Using a blank image instead.")
         # Return a blank (black) image if file not found
-        return torch.zeros((3, resolution, resolution), dtype=torch.float16)
+        return torch.zeros((3, resolution, resolution))
 
 def process_frame_for_display(frame_tensor):
     """
@@ -121,11 +133,11 @@ def process_frame_for_display(frame_tensor):
     frame_np = np.array(frame_pil)
     return frame_np
 
-def one_hot_encode(action, num_classes=5):
+def one_hot_encode(action, num_classes=5, dtype=torch.float16):
     """
     One-hot encode an action
     """
-    vector = torch.zeros(num_classes, dtype=torch.float16)
+    vector = torch.zeros(num_classes, dtype=dtype)
     vector[action] = 1.0
     return vector
 
@@ -141,24 +153,28 @@ def run_pacman_inference(config, args):
     clock = pygame.time.Clock()
     
     # Set up model and VAE
-    model, vae, config = setup_model(config, args.checkpoint, args.device)
+    model, vae, config = setup_model(config, args.checkpoint, args.device, args.debug)
     
     # Initial frame setup
     seq_len = config.data.sequence_length
     print(f"Using sequence length: {seq_len}")
     
+    # Determine precision based on config
+    dtype = torch.float16 if config.model.mixed_precision == 'fp16' else torch.float32
+    print(f"Using precision: {dtype}")
+    
     # Create blank (black) frames for initial sequence
-    blank_frame = torch.zeros((3, resolution, resolution), dtype=torch.float16, device=args.device)
+    blank_frame = torch.zeros((3, resolution, resolution), dtype=dtype, device=args.device)
     
     # Load the initial frame
     initial_frame = load_initial_frame(args.image, resolution=resolution)
-    initial_frame = initial_frame.to(args.device)
+    initial_frame = initial_frame.to(dtype).to(args.device)
     
     # Set up initial sequence with black frames + initial frame
     frames = [blank_frame] * (seq_len - 1) + [initial_frame]
     
     # Set up actions (initially all NO_ACTION)
-    actions = [one_hot_encode(4).to(args.device)] * (seq_len - 1)  # No action for all initial frames
+    actions = [one_hot_encode(4, dtype=dtype).to(args.device)] * (seq_len - 1)  # No action for all initial frames
     
     # Set up initial input tensors for model
     frames_tensor = torch.stack(frames)  # [seq_len, C, H, W]
@@ -169,115 +185,128 @@ def run_pacman_inference(config, args):
     
     print("Starting inference loop...")
     
-    while running:
-        # Handle events
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                running = False
-            elif event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_ESCAPE:
+    try:
+        while running:
+            # Handle events
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
                     running = False
-                elif event.key in ACTION_MAP:
-                    current_action = ACTION_MAP[event.key]
-            elif event.type == pygame.KEYUP:
-                if event.key in ACTION_MAP:
-                    current_action = 4  # NO_ACTION when key is released
-        
-        # Add current action to actions list and remove oldest
-        actions.append(one_hot_encode(current_action).to(args.device))
-        actions = actions[1:]
-        
-        # Prepare inputs for model
-        # 1. Flatten frames for observation input
-        # Reshape to match the expected input format for the history encoder
-        # The history encoder expects [B, C*seq_len, H, W] where C=3 for RGB images
-        obs_frames = frames_tensor[:-1]  # [seq_len-1, C, H, W]
-        obs_frames = obs_frames.permute(1, 0, 2, 3)  # [C, seq_len-1, H, W]
-        obs_frames = obs_frames.reshape(3 * (seq_len - 1), resolution, resolution)  # [C*(seq_len-1), H, W]
-        obs_frames = obs_frames.unsqueeze(0)  # Add batch dimension [1, C*(seq_len-1), H, W]
-        
-        # Debug prints
-        if args.debug:
-            print(f"Observation shape: {obs_frames.shape}")
-            print(f"Expected shape: [1, {3 * (seq_len - 1)}, {resolution}, {resolution}]")
-        
-        # 2. Add noise to observation frames
-        noise = torch.randn_like(obs_frames)
-        noise_scale = 0.3 * torch.rand(1).item()
-        noisy_obs = obs_frames + noise_scale * noise
-        
-        # 3. Get the last frame as target image
-        img = frames_tensor[-1]  # [C, H, W]
-        
-        # 4. Set up actions tensor for model
-        actions_tensor = torch.stack(actions).unsqueeze(0)  # [1, seq_len-1, 5]
-        action_masks = torch.ones(1, seq_len-1, device=args.device)  # [1, seq_len-1]
-        
-        # 5. Generate noise for denoising
-        z = torch.randn_like(img.unsqueeze(0))  # [1, C, H, W]
-        
-        # 6. Set up model kwargs
-        hw = torch.tensor([[resolution, resolution]], dtype=torch.float, device=args.device)
-        ar = torch.tensor([[1.0]], device=args.device)
-        
-        # Null action for classifier-free guidance
-        null_action = torch.zeros(1, 1, seq_len-1, 5, device=args.device)
-        null_action_mask = torch.ones(1, seq_len-1, device=args.device)
-        
-        model_kwargs = {
-            'data_info': {'img_hw': hw, 'aspect_ratio': ar},
-            'mask': None,
-            'obs': noisy_obs,  # [1, C*(seq_len-1), H, W]
-        }
-        
-        # Run sampling
-        with torch.no_grad():
-            # Use DPM-Solver for sampling
-            dpm_solver = DPMS(
-                model.forward_with_dpmsolver,
-                condition=actions_tensor.unsqueeze(1),  # [1, 1, seq_len-1, 5]
-                uncondition=null_action,
-                cfg_scale=4.5,
-                model_kwargs=model_kwargs,
-                model_type="flow",
-                schedule="FLOW",
-            )
+                elif event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_ESCAPE:
+                        running = False
+                    elif event.key in ACTION_MAP:
+                        current_action = ACTION_MAP[event.key]
+                elif event.type == pygame.KEYUP:
+                    if event.key in ACTION_MAP:
+                        current_action = 4  # NO_ACTION when key is released
             
-            # Sample with reduced steps for real-time performance
-            denoised = dpm_solver.sample(
-                z,
-                steps=20,  # Reduced from 40 for real-time
-                order=2,
-                skip_type="time_uniform_flow",
-                method="multistep",
-                flow_shift=config.scheduler.flow_shift,
-            )
+            # Add current action to actions list and remove oldest
+            actions.append(one_hot_encode(current_action, dtype=dtype).to(args.device))
+            actions = actions[1:]
             
-            # Decode the latent using VAE
-            denoised = denoised.to(torch.float16)
-            samples = vae_decode(config.vae.vae_type, vae, denoised)
+            # Prepare inputs for model
+            # 1. Flatten frames for observation input
+            # Reshape to match the expected input format for the history encoder
+            # The history encoder expects [B, C*seq_len, H, W] where C=3 for RGB images
+            obs_frames = frames_tensor[:-1]  # [seq_len-1, C, H, W]
             
-            # Process for display
-            output_frame = samples[0]  # Remove batch dimension
+            # Debug prints
+            if args.debug:
+                print(f"Frames tensor shape: {frames_tensor.shape}")
+                print(f"Observation frames shape before reshape: {obs_frames.shape}")
             
-        # Convert tensor to numpy for display
-        display_frame = process_frame_for_display(output_frame)
-        
-        # Update display
-        pygame_surface = pygame.surfarray.make_surface(display_frame)
-        window.blit(pygame_surface, (0, 0))
-        pygame.display.flip()
-        
-        # Update frames for next iteration
-        frames.append(output_frame.cpu())
-        frames = frames[1:]
-        frames_tensor = torch.stack(frames).to(args.device)
-        
-        # Cap the framerate
-        clock.tick(FPS)
-    
-    # Clean up
-    pygame.quit()
+            # Reshape to match expected input format
+            obs_frames = obs_frames.permute(1, 0, 2, 3)  # [C, seq_len-1, H, W]
+            obs_frames = obs_frames.reshape(3 * (seq_len - 1), resolution, resolution)  # [C*(seq_len-1), H, W]
+            obs_frames = obs_frames.unsqueeze(0)  # Add batch dimension [1, C*(seq_len-1), H, W]
+            
+            # Debug prints
+            if args.debug:
+                print(f"Observation shape after reshape: {obs_frames.shape}")
+                print(f"Expected shape: [1, {3 * (seq_len - 1)}, {resolution}, {resolution}]")
+                print(f"Observation dtype: {obs_frames.dtype}")
+            
+            # 2. Add noise to observation frames
+            noise = torch.randn_like(obs_frames)
+            noise_scale = 0.3 * torch.rand(1).item()
+            noisy_obs = obs_frames + noise_scale * noise
+            
+            # 3. Get the last frame as target image
+            img = frames_tensor[-1]  # [C, H, W]
+            
+            # 4. Set up actions tensor for model
+            actions_tensor = torch.stack(actions).unsqueeze(0)  # [1, seq_len-1, 5]
+            action_masks = torch.ones(1, seq_len-1, device=args.device, dtype=dtype)  # [1, seq_len-1]
+            
+            # 5. Generate noise for denoising
+            z = torch.randn_like(img.unsqueeze(0))  # [1, C, H, W]
+            
+            # 6. Set up model kwargs
+            hw = torch.tensor([[resolution, resolution]], dtype=dtype, device=args.device)
+            ar = torch.tensor([[1.0]], dtype=dtype, device=args.device)
+            
+            # Null action for classifier-free guidance
+            null_action = torch.zeros(1, 1, seq_len-1, 5, device=args.device, dtype=dtype)
+            null_action_mask = torch.ones(1, seq_len-1, device=args.device, dtype=dtype)
+            
+            model_kwargs = {
+                'data_info': {'img_hw': hw, 'aspect_ratio': ar},
+                'mask': None,
+                'obs': noisy_obs,  # [1, C*(seq_len-1), H, W]
+            }
+            
+            # Run sampling
+            with torch.no_grad():
+                # Use DPM-Solver for sampling
+                dpm_solver = DPMS(
+                    model.forward_with_dpmsolver,
+                    condition=actions_tensor.unsqueeze(1),  # [1, 1, seq_len-1, 5]
+                    uncondition=null_action,
+                    cfg_scale=4.5,
+                    model_kwargs=model_kwargs,
+                    model_type="flow",
+                    schedule="FLOW",
+                )
+                
+                # Sample with reduced steps for real-time performance
+                denoised = dpm_solver.sample(
+                    z,
+                    steps=20,  # Reduced from 40 for real-time
+                    order=2,
+                    skip_type="time_uniform_flow",
+                    method="multistep",
+                    flow_shift=config.scheduler.flow_shift,
+                )
+                
+                # Decode the latent using VAE
+                denoised = denoised.to(dtype)
+                samples = vae_decode(config.vae.vae_type, vae, denoised)
+                
+                # Process for display
+                output_frame = samples[0]  # Remove batch dimension
+                
+            # Convert tensor to numpy for display
+            display_frame = process_frame_for_display(output_frame)
+            
+            # Update display
+            pygame_surface = pygame.surfarray.make_surface(display_frame)
+            window.blit(pygame_surface, (0, 0))
+            pygame.display.flip()
+            
+            # Update frames for next iteration
+            frames.append(output_frame.cpu())
+            frames = frames[1:]
+            frames_tensor = torch.stack(frames).to(args.device)
+            
+            # Cap the framerate
+            clock.tick(FPS)
+    except Exception as e:
+        print(f"Error during inference: {e}")
+        import traceback
+        traceback.print_exc()
+    finally:
+        # Clean up
+        pygame.quit()
 
 def main():
     # Parse arguments
