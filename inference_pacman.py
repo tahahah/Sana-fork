@@ -34,6 +34,7 @@ class InferenceArgs:
     checkpoint: str = None
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
     image: str = "scripts/image.jpg"
+    debug: bool = False
 
 def setup_model(config, checkpoint_path=None, device='cuda'):
     """
@@ -47,6 +48,9 @@ def setup_model(config, checkpoint_path=None, device='cuda'):
     for key, value in vars(config.model).items():
         if key != 'model':  # Skip the model name as we've already used it as 'type'
             model_config[key] = value
+    
+    # Explicitly set the sequence length to match what's in the config
+    model_config['seq_length'] = config.data.sequence_length
     
     model = build_model(model_config)
     
@@ -94,10 +98,14 @@ def load_initial_frame(image_path, resolution=512):
     ])
     
     # Load the image
-    image = Image.open(image_path)
-    transformed_image = transform(image)
-    
-    return transformed_image
+    try:
+        image = Image.open(image_path)
+        transformed_image = transform(image)
+        return transformed_image
+    except FileNotFoundError:
+        print(f"Warning: Image file {image_path} not found. Using a blank image instead.")
+        # Return a blank (black) image if file not found
+        return torch.zeros((3, resolution, resolution), dtype=torch.float16)
 
 def process_frame_for_display(frame_tensor):
     """
@@ -181,7 +189,17 @@ def run_pacman_inference(config, args):
         
         # Prepare inputs for model
         # 1. Flatten frames for observation input
-        obs_frames = frames_tensor[:-1].view(-1, resolution, resolution)  # [(seq_len-1)*C, H, W]
+        # Reshape to match the expected input format for the history encoder
+        # The history encoder expects [B, C*seq_len, H, W] where C=3 for RGB images
+        obs_frames = frames_tensor[:-1]  # [seq_len-1, C, H, W]
+        obs_frames = obs_frames.permute(1, 0, 2, 3)  # [C, seq_len-1, H, W]
+        obs_frames = obs_frames.reshape(3 * (seq_len - 1), resolution, resolution)  # [C*(seq_len-1), H, W]
+        obs_frames = obs_frames.unsqueeze(0)  # Add batch dimension [1, C*(seq_len-1), H, W]
+        
+        # Debug prints
+        if args.debug:
+            print(f"Observation shape: {obs_frames.shape}")
+            print(f"Expected shape: [1, {3 * (seq_len - 1)}, {resolution}, {resolution}]")
         
         # 2. Add noise to observation frames
         noise = torch.randn_like(obs_frames)
@@ -209,7 +227,7 @@ def run_pacman_inference(config, args):
         model_kwargs = {
             'data_info': {'img_hw': hw, 'aspect_ratio': ar},
             'mask': None,
-            'obs': noisy_obs.unsqueeze(0),  # Add batch dimension
+            'obs': noisy_obs,  # [1, C*(seq_len-1), H, W]
         }
         
         # Run sampling
