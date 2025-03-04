@@ -7,7 +7,7 @@ import pygame
 from PIL import Image
 import torchvision.transforms as transforms
 from diffusion import DPMS
-from diffusion.model.builder import build_model, get_vae, vae_decode
+from diffusion.model.builder import get_vae, vae_encode, vae_decode, build_model
 from diffusion.utils.config import SanaConfig
 from diffusion.utils.checkpoint import load_checkpoint
 from diffusion.data.datasets.pacman_data import convert_to_rgb, make_square, rotate_90_clockwise, to_float16
@@ -205,43 +205,69 @@ def run_pacman_inference(config, args):
             actions = actions[1:]
             
             # Prepare inputs for model
-            # 1. Flatten frames for observation input
-            # Reshape to match the expected input format for the history encoder
-            # The history encoder expects [B, C*seq_len, H, W] where C=3 for RGB images
+            # 1. Get observation frames (all frames except the last one)
             obs_frames = frames_tensor[:-1]  # [seq_len-1, C, H, W]
             
             # Debug prints
             if args.debug:
                 print(f"Frames tensor shape: {frames_tensor.shape}")
-                print(f"Observation frames shape before reshape: {obs_frames.shape}")
+                print(f"Observation frames shape before encoding: {obs_frames.shape}")
             
-            # Reshape to match expected input format
-            obs_frames = obs_frames.permute(1, 0, 2, 3)  # [C, seq_len-1, H, W]
-            obs_frames = obs_frames.reshape(3 * (seq_len - 1), resolution, resolution)  # [C*(seq_len-1), H, W]
-            obs_frames = obs_frames.unsqueeze(0)  # Add batch dimension [1, C*(seq_len-1), H, W]
+            # 2. Encode all frames with VAE to get latents
+            with torch.no_grad():
+                # Process each frame individually through the VAE
+                encoded_obs_frames = []
+                
+                if args.debug:
+                    print(f"VAE type: {config.vae.vae_type}")
+                    print(f"VAE device: {next(vae.parameters()).device}")
+                    print(f"VAE dtype: {next(vae.parameters()).dtype}")
+                
+                for i in range(obs_frames.shape[0]):
+                    # Add batch dimension for VAE
+                    frame = obs_frames[i].unsqueeze(0)  # [1, C, H, W]
+                    # Encode with VAE
+                    encoded = vae_encode(config.vae.vae_type, vae, frame, args.device, sample_posterior=False)
+                    if args.debug and i == 0:  # Only print for the first frame
+                        print(f"Encoded latent shape: {encoded.shape}")
+                        print(f"Encoded latent dtype: {encoded.dtype}")
+                    encoded_obs_frames.append(encoded.squeeze(0))  # Remove batch dim
+                
+                # Stack encoded frames
+                encoded_obs = torch.stack(encoded_obs_frames)  # [seq_len-1, 4, h, w]
+                
+                # Reshape to match expected input format for history encoder
+                # The history encoder expects [B, C*seq_len, h, w]
+                encoded_obs = encoded_obs.permute(1, 0, 2, 3)  # [4, seq_len-1, h, w]
+                latent_h, latent_w = encoded_obs.shape[2], encoded_obs.shape[3]
+                encoded_obs = encoded_obs.reshape(4 * (seq_len - 1), latent_h, latent_w)  # [4*(seq_len-1), h, w]
+                encoded_obs = encoded_obs.unsqueeze(0)  # Add batch dimension [1, 4*(seq_len-1), h, w]
             
             # Debug prints
             if args.debug:
-                print(f"Observation shape after reshape: {obs_frames.shape}")
-                print(f"Expected shape: [1, {3 * (seq_len - 1)}, {resolution}, {resolution}]")
-                print(f"Observation dtype: {obs_frames.dtype}")
+                print(f"Encoded observation shape: {encoded_obs.shape}")
+                print(f"Expected shape: [1, {4 * (seq_len - 1)}, {latent_h}, {latent_w}]")
+                print(f"Encoded observation dtype: {encoded_obs.dtype}")
             
-            # 2. Add noise to observation frames
-            noise = torch.randn_like(obs_frames)
-            noise_scale = 0.3 * torch.rand(1).item()
-            noisy_obs = obs_frames + noise_scale * noise
+            # 3. Add noise to encoded observation
+            # noise = torch.randn_like(encoded_obs)
+            # noise_scale = 0.3 * torch.rand(1).item()
+            # noisy_obs = encoded_obs + noise_scale * noise
             
-            # 3. Get the last frame as target image
-            img = frames_tensor[-1]  # [C, H, W]
+            # 4. Get the last frame and encode it
+            img = frames_tensor[-1].unsqueeze(0)  # Add batch dim [1, C, H, W]
+            with torch.no_grad():
+                encoded_img = vae_encode(config.vae.vae_type, vae, img, args.device, sample_posterior=False)
+                encoded_img = encoded_img.squeeze(0)  # [4, h, w]
             
-            # 4. Set up actions tensor for model
+            # 5. Set up actions tensor for model
             actions_tensor = torch.stack(actions).unsqueeze(0)  # [1, seq_len-1, 5]
             action_masks = torch.ones(1, seq_len-1, device=args.device, dtype=dtype)  # [1, seq_len-1]
             
-            # 5. Generate noise for denoising
-            z = torch.randn_like(img.unsqueeze(0))  # [1, C, H, W]
+            # 6. Generate noise for denoising
+            z = torch.randn_like(encoded_img.unsqueeze(0))  # [1, 4, h, w]
             
-            # 6. Set up model kwargs
+            # 7. Set up model kwargs
             hw = torch.tensor([[resolution, resolution]], dtype=dtype, device=args.device)
             ar = torch.tensor([[1.0]], dtype=dtype, device=args.device)
             
@@ -252,7 +278,7 @@ def run_pacman_inference(config, args):
             model_kwargs = {
                 'data_info': {'img_hw': hw, 'aspect_ratio': ar},
                 'mask': None,
-                'obs': noisy_obs,  # [1, C*(seq_len-1), H, W]
+                'obs': encoded_obs,  # [1, 4*(seq_len-1), h, w]
             }
             
             # Run sampling
