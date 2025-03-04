@@ -36,10 +36,13 @@ def find_model(model_name):
         return download_model(model_name)
 
     # Load a custom Sana checkpoint:
-    model_name = hf_download_or_fpath(model_name)
-    assert os.path.isfile(model_name), f"Could not find Sana checkpoint at {model_name}"
-    print(colored(f"[Sana] Loading model from {model_name}", attrs=["bold"]))
-    return torch.load(model_name, map_location=lambda storage, loc: storage)
+    downloaded_path = hf_download_or_fpath(model_name)
+    if downloaded_path is None:
+        raise ValueError(f"Failed to download or find model at {model_name}")
+    
+    assert os.path.isfile(downloaded_path), f"Could not find Sana checkpoint at {downloaded_path}"
+    print(colored(f"[Sana] Loading model from {downloaded_path}", attrs=["bold"]))
+    return torch.load(downloaded_path, map_location=lambda storage, loc: storage)
 
 
 def download_model(model_name):

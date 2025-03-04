@@ -22,6 +22,9 @@ from huggingface_hub import hf_hub_download, snapshot_download
 
 
 def hf_download_or_fpath(path):
+    if path is None:
+        return None
+        
     if osp.exists(path):
         return path
 
@@ -30,6 +33,10 @@ def hf_download_or_fpath(path):
         repo_id = "/".join(segs[:2])
         filename = "/".join(segs[2:])
         return hf_download_data(repo_id, filename, repo_type="model", download_full_repo=True)
+    
+    # Return the path as is if it doesn't exist and doesn't start with "hf://"
+    # This allows the calling function to handle the file not found error
+    return path
 
 
 def hf_download_data(
