@@ -41,7 +41,14 @@ def setup_model(config, checkpoint_path=None, device='cuda'):
     """
     # Set up model
     print("Building model...")
-    model = build_model(config.model)
+    # The model config needs a 'type' key for the registry
+    model_config = dict(type=config.model.model)
+    # Add all other config parameters
+    for key, value in vars(config.model).items():
+        if key != 'model':  # Skip the model name as we've already used it as 'type'
+            model_config[key] = value
+    
+    model = build_model(model_config)
     
     # Load checkpoint if provided
     if checkpoint_path:
