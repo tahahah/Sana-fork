@@ -30,11 +30,18 @@ ACTION_MAP = {
 
 @dataclass
 class InferenceArgs:
+    """
+    Arguments for inference
+    """
     config: str = "configs/sana_config/512ms/Sana_pacman.yaml"
     checkpoint: str = None
-    device: str = "cuda" if torch.cuda.is_available() else "cpu"
+    device: str = "cuda"
     image: str = "scripts/image.jpg"
     debug: bool = False
+    x11_display: bool = False  # Enable X11 display for SSH with X forwarding
+    headless: bool = False  # Run without display (for SSH)
+    output_dir: str = "output/frames"  # Directory to save frames when in headless mode
+    save_frames: bool = False  # Save frames even in non-headless mode
 
 def setup_model(config, checkpoint_path=None, device='cuda', debug=False):
     """
@@ -178,11 +185,18 @@ def run_pacman_inference(config, args):
     Run Pacman model inference loop
     """
     # Set up PyGame for visualization and input handling
-    pygame.init()
-    resolution = config.model.image_size  # Use resolution from config
-    window = pygame.display.set_mode((resolution, resolution))
-    pygame.display.set_caption("Pacman Model Inference")
-    clock = pygame.time.Clock()
+    if not args.headless:
+        # Configure for X11 forwarding if needed
+        if args.x11_display:
+            # Set SDL to use X11
+            os.environ['SDL_VIDEODRIVER'] = 'x11'
+            print("Using X11 display for SSH forwarding")
+        
+        pygame.init()
+        resolution = config.model.image_size  # Use resolution from config
+        window = pygame.display.set_mode((resolution, resolution))
+        pygame.display.set_caption("Pacman Model Inference")
+        clock = pygame.time.Clock()
     
     # Set up model and VAE
     model, vae, config = setup_model(config, args.checkpoint, args.device, args.debug)
@@ -232,23 +246,25 @@ def run_pacman_inference(config, args):
     # Main loop
     running = True
     current_action = 4  # Start with NO_ACTION
+    frame_count = 0
     
     print("Starting inference loop...")
     
     try:
         while running:
             # Handle events
-            for event in pygame.event.get():
-                if event.type == pygame.QUIT:
-                    running = False
-                elif event.type == pygame.KEYDOWN:
-                    if event.key == pygame.K_ESCAPE:
+            if not args.headless:
+                for event in pygame.event.get():
+                    if event.type == pygame.QUIT:
                         running = False
-                    elif event.key in ACTION_MAP:
-                        current_action = ACTION_MAP[event.key]
-                elif event.type == pygame.KEYUP:
-                    if event.key in ACTION_MAP:
-                        current_action = 4  # NO_ACTION when key is released
+                    elif event.type == pygame.KEYDOWN:
+                        if event.key == pygame.K_ESCAPE:
+                            running = False
+                        elif event.key in ACTION_MAP:
+                            current_action = ACTION_MAP[event.key]
+                    elif event.type == pygame.KEYUP:
+                        if event.key in ACTION_MAP:
+                            current_action = 4  # NO_ACTION when key is released
             
             # Add current action to actions list and remove oldest
             actions.append(one_hot_encode(current_action, dtype=dtype).to(args.device))
@@ -371,9 +387,19 @@ def run_pacman_inference(config, args):
             display_frame = process_frame_for_display(output_frame)
             
             # Update display
-            pygame_surface = pygame.surfarray.make_surface(display_frame)
-            window.blit(pygame_surface, (0, 0))
-            pygame.display.flip()
+            if not args.headless:
+                pygame_surface = pygame.surfarray.make_surface(display_frame)
+                window.blit(pygame_surface, (0, 0))
+                pygame.display.flip()
+            
+            # Save frame if in headless mode or save_frames is enabled
+            if args.headless or args.save_frames:
+                # Create output directory if it doesn't exist
+                os.makedirs(args.output_dir, exist_ok=True)
+                # Save frame as image
+                frame_pil = Image.fromarray(display_frame)
+                frame_pil.save(os.path.join(args.output_dir, f"frame_{frame_count:04d}.png"))
+                frame_count += 1
             
             # Update frames for next iteration
             frames.append(output_frame.detach().cpu())
@@ -382,18 +408,26 @@ def run_pacman_inference(config, args):
             frames_tensor = torch.stack([frame.to(args.device) for frame in frames])
             
             # Cap the framerate
-            clock.tick(FPS)
+            if not args.headless:
+                clock.tick(FPS)
     except Exception as e:
         print(f"Error during inference: {e}")
         import traceback
         traceback.print_exc()
     finally:
         # Clean up
-        pygame.quit()
+        if not args.headless:
+            pygame.quit()
 
 def main():
     # Parse arguments
     args = pyrallis.parse(InferenceArgs)
+    
+    # Print SSH-related settings
+    if args.headless:
+        print(f"Running in headless mode. Frames will be saved to {args.output_dir}")
+    elif args.x11_display:
+        print("Using X11 display for SSH forwarding. Make sure you're using 'ssh -X' or 'ssh -Y'")
     
     # Load the config file using the utility function
     print(f"Loading config from {args.config}")
