@@ -151,8 +151,12 @@ def process_frame_for_display(frame_tensor):
     """
     Convert a PyTorch tensor to a NumPy array for display
     """
+    # Make sure the tensor is on CPU before converting to numpy
+    if frame_tensor.device.type != 'cpu':
+        frame_tensor = frame_tensor.detach().cpu()
+    
     # Convert to numpy and apply necessary transformations
-    frame_np = frame_tensor.permute(1, 2, 0).cpu().numpy()
+    frame_np = frame_tensor.permute(1, 2, 0).numpy()
     frame_np = np.clip(frame_np * 255, 0, 255).astype(np.uint8)
     # Rotate back and flip to match original orientation
     frame_pil = Image.fromarray(frame_np)
@@ -183,6 +187,15 @@ def run_pacman_inference(config, args):
     # Set up model and VAE
     model, vae, config = setup_model(config, args.checkpoint, args.device, args.debug)
     
+    # Get VAE device for later use
+    vae_device = next(vae.parameters()).device
+    model_device = next(model.parameters()).device
+    if args.debug:
+        print(f"Model device: {model_device}")
+        print(f"Model dtype: {next(model.parameters()).dtype}")
+        print(f"VAE device: {vae_device}")
+        print(f"VAE dtype: {next(vae.parameters()).dtype}")
+    
     # Initial frame setup
     seq_len = config.data.sequence_length
     print(f"Using sequence length: {seq_len}")
@@ -198,6 +211,10 @@ def run_pacman_inference(config, args):
     initial_frame = load_initial_frame(args.image, resolution=resolution)
     initial_frame = initial_frame.to(dtype).to(args.device)
     
+    if args.debug:
+        print(f"Blank frame device: {blank_frame.device}, dtype: {blank_frame.dtype}")
+        print(f"Initial frame device: {initial_frame.device}, dtype: {initial_frame.dtype}")
+    
     # Set up initial sequence with black frames + initial frame
     frames = [blank_frame] * (seq_len - 1) + [initial_frame]
     
@@ -205,7 +222,12 @@ def run_pacman_inference(config, args):
     actions = [one_hot_encode(4, dtype=dtype).to(args.device)] * (seq_len - 1)  # No action for all initial frames
     
     # Set up initial input tensors for model
-    frames_tensor = torch.stack(frames)  # [seq_len, C, H, W]
+    # Make sure all frames are on the same device before stacking
+    frames_tensor = torch.stack([frame.to(args.device) for frame in frames])
+    
+    if args.debug:
+        print(f"Frames tensor shape: {frames_tensor.shape}")
+        print(f"Frames tensor device: {frames_tensor.device}, dtype: {frames_tensor.dtype}")
     
     # Main loop
     running = True
@@ -248,12 +270,12 @@ def run_pacman_inference(config, args):
                 
                 if args.debug:
                     print(f"VAE type: {config.vae.vae_type}")
-                    print(f"VAE device: {next(vae.parameters()).device}")
-                    print(f"VAE dtype: {next(vae.parameters()).dtype}")
                 
                 for i in range(obs_frames.shape[0]):
                     # Add batch dimension for VAE
                     frame = obs_frames[i].unsqueeze(0)  # [1, C, H, W]
+                    # Ensure frame is on the same device as VAE
+                    frame = frame.to(vae_device)
                     # Encode with VAE
                     encoded = vae_encode(config.vae.vae_type, vae, frame, args.device, sample_posterior=False)
                     if args.debug and i == 0:  # Only print for the first frame
@@ -284,6 +306,8 @@ def run_pacman_inference(config, args):
             
             # 4. Get the last frame and encode it
             img = frames_tensor[-1].unsqueeze(0)  # Add batch dim [1, C, H, W]
+            # Ensure image is on the same device as VAE
+            img = img.to(vae_device)
             with torch.no_grad():
                 encoded_img = vae_encode(config.vae.vae_type, vae, img, args.device, sample_posterior=False)
                 encoded_img = encoded_img.squeeze(0)  # [4, h, w]
@@ -339,6 +363,10 @@ def run_pacman_inference(config, args):
                 # Process for display
                 output_frame = samples[0]  # Remove batch dimension
                 
+                if args.debug:
+                    print(f"Output frame shape: {output_frame.shape}")
+                    print(f"Output frame device: {output_frame.device}, dtype: {output_frame.dtype}")
+                
             # Convert tensor to numpy for display
             display_frame = process_frame_for_display(output_frame)
             
@@ -348,9 +376,10 @@ def run_pacman_inference(config, args):
             pygame.display.flip()
             
             # Update frames for next iteration
-            frames.append(output_frame.cpu())
+            frames.append(output_frame.detach().cpu())
             frames = frames[1:]
-            frames_tensor = torch.stack(frames).to(args.device)
+            # Make sure all frames are on the same device before stacking
+            frames_tensor = torch.stack([frame.to(args.device) for frame in frames])
             
             # Cap the framerate
             clock.tick(FPS)
