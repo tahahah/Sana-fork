@@ -42,38 +42,30 @@ def setup_model(config, checkpoint_path=None, device='cuda', debug=False):
     """
     # Set up model
     print("Building model...")
-    # The model config needs a 'type' key for the registry
-    model_config = dict(type=config.model.model)
-    # Add all other config parameters
-    for key, value in vars(config.model).items():
-        if key != 'model':  # Skip the model name as we've already used it as 'type'
-            model_config[key] = value
     
-    # Explicitly set the sequence length to match what's in the config
-    model_config['seq_length'] = config.data.sequence_length
+    # Build model with the same parameters as in train_pacman.py
+    model_kwargs = {
+        "pe_interpolation": config.model.pe_interpolation,
+        "qk_norm": config.model.qk_norm,
+        "micro_condition": config.model.micro_condition,
+        "y_norm": True,
+        "attn_type": config.model.attn_type,
+        "ffn_type": config.model.ffn_type,
+        "mlp_ratio": config.model.mlp_ratio,
+        "mlp_acts": list(config.model.mlp_acts),
+        "in_channels": config.model.in_channels,
+        "y_norm_scale_factor": 0.01,
+        "use_pe": config.model.use_pe,
+        "linear_head_dim": config.model.linear_head_dim,
+        "pred_sigma": getattr(config.scheduler, "pred_sigma", True),
+        "learn_sigma": getattr(config.scheduler, "learn_sigma", True),
+        "caption_channels": config.model.num_classes,
+        "model_max_length": config.data.sequence_length-1,
+        "seq_length": config.data.sequence_length,
+    }
     
     if debug:
-        print(f"Model config: {model_config}")
-    
-    model = build_model(model_config)
-    
-    if debug:
-        print(f"Model structure:")
-        print(model)
-    
-    # Load checkpoint if provided
-    if checkpoint_path:
-        print(f"Loading checkpoint from {checkpoint_path}")
-        epoch, missing, unexpected, _ = load_checkpoint(
-            checkpoint_path, 
-            model,
-            null_embed_path="null_embed.pth" if os.path.exists("null_embed.pth") else None
-        )
-        print(f"Loaded checkpoint from epoch {epoch}")
-        if missing:
-            print(f"Missing keys: {missing}")
-        if unexpected:
-            print(f"Unexpected keys: {unexpected}")
+        print(f"Model kwargs: {model_kwargs}")
     
     # Load VAE
     print(f"Loading VAE: {config.vae.vae_type} from {config.vae.vae_pretrained}")
@@ -83,6 +75,42 @@ def setup_model(config, checkpoint_path=None, device='cuda', debug=False):
     # Set VAE scaling factor
     if hasattr(vae, 'cfg') and vae.cfg.scaling_factor is None:
         vae.cfg.scaling_factor = config.vae.scale_factor
+    
+    # Calculate latent size
+    latent_size = int(config.model.image_size) // config.vae.vae_downsample_rate
+    
+    # Build model
+    model = build_model(
+        config.model.model,
+        False,  # grad_checkpointing
+        getattr(config.model, "fp32_attention", False),
+        input_size=latent_size,
+        **model_kwargs,
+    )
+    
+    if debug:
+        print(f"Model structure:")
+        print(model)
+    
+    # Load checkpoint if provided
+    if checkpoint_path:
+        print(f"Loading checkpoint from {checkpoint_path}")
+        # Create null_embed_path in the same way as train_pacman.py
+        null_embed_path = None
+        if os.path.exists("null_embed.pth"):
+            null_embed_path = "null_embed.pth"
+        
+        # Load checkpoint
+        epoch, missing, unexpected, _ = load_checkpoint(
+            checkpoint_path, 
+            model,
+            null_embed_path=null_embed_path
+        )
+        print(f"Loaded checkpoint from epoch {epoch}")
+        if missing:
+            print(f"Missing keys: {missing}")
+        if unexpected:
+            print(f"Unexpected keys: {unexpected}")
     
     # Move model to device and eval mode
     model = model.to(device)
