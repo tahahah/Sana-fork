@@ -255,7 +255,7 @@ def run_pacman_inference(config, args):
         # Build the dataset
         image_size = config.model.image_size
         val_dataset = build_dataset(
-            asdict(config.data), 
+            config.data, 
             resolution=image_size, 
             aspect_ratio_type=config.model.aspect_ratio_type, 
             vae_downsample_rate=config.vae.vae_downsample_rate, 
