@@ -18,6 +18,7 @@ model:
   fp32_attention: true
   load_from:
   resume_from:
+    checkpoint: "latest"
   aspect_ratio_type: ASPECT_RATIO_512
   multi_scale: false
   attn_type: linear
