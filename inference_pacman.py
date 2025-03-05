@@ -356,30 +356,45 @@ def run_pacman_inference(config, args):
         if args.debug:
             print(f"Input image tensor shape: {img_tensor.shape}")
         
-        # 3. Generate initial noise like the input frame
-        z = torch.randn_like(img_tensor)
+        # 3. Encode observations with VAE if needed
+        with torch.no_grad():
+            # Move to VAE device
+            obs_tensor_vae = obs_tensor.to(vae_device)
+            
+            # Encode observations
+            encoded_obs = vae_encode(config.vae.vae_type, vae, obs_tensor_vae, vae_device)
+            
+            if args.debug:
+                print(f"Encoded observations shape: {encoded_obs.shape}")
+        
+        # 4. Generate initial noise with the same shape as the latent
+        # We determine the latent shape by encoding a sample image
+        with torch.no_grad():
+            img_sample = img_tensor.to(vae_device)
+            encoded_img_sample = vae_encode(config.vae.vae_type, vae, img_sample, vae_device)
+            z = torch.randn_like(encoded_img_sample)
         
         if args.debug:
             print(f"Z shape: {z.shape}")
         
-        # 4. Prepare action tensor: [B, 1, S, A]
+        # 5. Prepare action tensor: [B, 1, S, A]
         action_tensor = torch.stack(actions).unsqueeze(0).unsqueeze(1)  # [S, A] -> [1, 1, S, A]
         action_tensor = action_tensor.to(model_device)
         
         if args.debug:
             print(f"Action tensor shape: {action_tensor.shape}")
-        
-        # 5. Create null action tensor for classifier-free guidance
+            
+        # 5b. Create null action tensor for classifier-free guidance
         null_action = torch.zeros_like(action_tensor)
         null_action[:, :, :, -1] = 1.0  # Set last dimension (NO_ACTION) to 1.0
         
-        # 6. Prepare model kwargs - pass observations directly as in run_sampling
-        hw = [img_tensor.shape[-2], img_tensor.shape[-1]]
+        # 6. Prepare model kwargs - pass encoded observations
+        hw = [encoded_img_sample.shape[-2], encoded_img_sample.shape[-1]]
         ar = hw[0] / hw[1]
         model_kwargs = {
             "data_info": {"img_hw": hw, "aspect_ratio": ar},
             "mask": None,
-            "obs": obs_tensor.to(model_device),  # Move to model device
+            "obs": encoded_obs.to(model_device),  # Move encoded obs to model device
         }
         
         # 7. Set up DPM solver and run directly on z (no pre-encoding with VAE needed)
@@ -409,17 +424,18 @@ def run_pacman_inference(config, args):
                 flow_shift=config.scheduler.flow_shift,
             )
             
-            # Decode the output with the VAE
-            denoised = denoised.to(vae_device, dtype=torch.float16)
-            output_frame = vae_decode(config.vae.vae_type, vae, denoised)
+            # Decode the output with the VAE (only for display)
+            display_output = denoised.clone()
+            display_output = display_output.to(vae_device, dtype=torch.float16)
+            decoded_frame = vae_decode(config.vae.vae_type, vae, display_output)
             
             if args.debug:
-                print(f"Output frame shape: {output_frame.shape}")
+                print(f"Output frame shape: {decoded_frame.shape}")
         
         # Display the frame
         if not args.headless:
             # Convert tensor to numpy for display
-            display_frame = process_frame_for_display(output_frame[0])
+            display_frame = process_frame_for_display(decoded_frame[0])
             
             # Display the frame
             pygame.surfarray.blit_array(window, display_frame)
@@ -428,7 +444,7 @@ def run_pacman_inference(config, args):
         # Save frame if in headless mode or save_frames is enabled
         if args.headless or args.save_frames:
             # Convert tensor to PIL image and save
-            frame_np = output_frame[0].permute(1, 2, 0).detach().cpu().numpy()
+            frame_np = decoded_frame[0].permute(1, 2, 0).detach().cpu().numpy()
             frame_np = np.clip(frame_np * 255, 0, 255).astype(np.uint8)
             frame_pil = Image.fromarray(frame_np)
             frame_pil = frame_pil.rotate(-90, expand=True)
@@ -437,8 +453,8 @@ def run_pacman_inference(config, args):
             frame_count += 1
         
         # Update for next iteration
-        # 1. Update the input frame with the generated frame
-        current_img = output_frame[0].detach().cpu()
+        # 1. Update the input frame with the raw denoised output (not decoded)
+        current_img = vae_decode(config.vae.vae_type, vae, denoised.to(vae_device))[0].detach().cpu()
         
         # 2. Update the observation frames by shifting
         # The obs format is [(seq_len-1)*C, H, W]
