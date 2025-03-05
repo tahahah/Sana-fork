@@ -103,7 +103,7 @@ def setup_model(config, checkpoint_path=None, device='cuda', debug=False):
     # Load checkpoint if provided
     ckpt_path = osp.join(config.train.work_dir, "checkpoints")
     check_flag = osp.exists(ckpt_path) and len(os.listdir(ckpt_path)) != 0
-    if config.model.resume_from.get("checkpoint", "") == "latest":
+    if config.model.resume_from is not None and config.model.resume_from.get("checkpoint", "") == "latest":
         if check_flag:
             checkpoints = os.listdir(ckpt_path)
             if "latest.pth" in checkpoints and osp.exists(osp.join(ckpt_path, "latest.pth")):
