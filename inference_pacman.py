@@ -457,18 +457,18 @@ def run_pacman_inference(config, args):
         
         # 2. Update the observation frames by shifting
         # The obs format is [(seq_len-1)*C, H, W]
-        C = 3  # RGB channels
-        channel_per_frame = C  # Each frame has C channels
-        total_channels = current_obs.shape[0]  # Total channels in observations
+        # From the debug logs, we need exactly 16 channels for observations (4 frames with 4 channels each)
+        input_channels = current_img.shape[0]  # Should be 4 channels per frame
+        expected_obs_channels = 16  # Total expected channels for observations (4 frames * 4 channels)
+        # Update observation frames by shifting
+        new_obs = torch.cat([current_obs[input_channels:], current_img], dim=0)
         
-        if total_channels > channel_per_frame:
-            # Remove the oldest frame's channels
-            new_obs_start = current_obs[channel_per_frame:].clone()
-            # Add the current input frame channels - ensure both tensors are on the same device
-            new_obs = torch.cat([new_obs_start.to(args.device), current_img.to(args.device)], dim=0)
-        else:
-            # If we only have one frame in history, just use the current frame
-            new_obs = current_img.clone()
+        # Assert that we have exactly the expected number of channels
+        assert new_obs.shape[0] == expected_obs_channels, f"Expected {expected_obs_channels} channels, got {new_obs.shape[0]}"
+            
+        # Debug print to verify channel count
+        if args.debug:
+            print(f"Updated observation shape: {new_obs.shape}")
         
         # Update the observation tensor
         current_obs = new_obs
