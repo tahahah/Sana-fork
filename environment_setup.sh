@@ -27,7 +27,7 @@ pip install -U xformers==0.0.27.post2 --index-url https://download.pytorch.org/w
 pip install -e .
 
 # install dotenv
-pip install python-dotenv tqdm huggingface-hub
+pip install python-dotenv tqdm huggingface-hub pygame
 
 # install torchprofile
 # pip install git+https://github.com/zhijian-liu/torchprofile
