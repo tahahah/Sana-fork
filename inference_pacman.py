@@ -4,6 +4,7 @@ import os.path as osp
 import time
 import numpy as np
 import torch
+from torch.serialization import validate_hpu_device
 import pygame
 from PIL import Image
 import torchvision.transforms as transforms
@@ -258,13 +259,15 @@ def run_pacman_inference(config, args):
             resolution=image_size, 
             aspect_ratio_type=config.model.aspect_ratio_type, 
             vae_downsample_rate=config.vae.vae_downsample_rate, 
-            vae=None # We want images to come as raw RGB from dataset, we will encode them after
+            vae=vae # We want images to come as raw RGB from dataset, we will encode them after
         )
         
         # Get a sample from the dataset
         dataset_iter = iter(val_dataset)
-        sample = next(dataset_iter)
-        
+        for _ in range(4):  # Skip the first 4 iterations
+            next(dataset_iter)
+        sample = next(dataset_iter)  # Get the 5th iteration
+
         # Extract frames from the sample
         if 'img' in sample and 'obs' in sample:
             # Get the input frame (img) and observation frames (obs)
@@ -298,15 +301,17 @@ def run_pacman_inference(config, args):
     # Set up the observation history - should be in format [(seq_len-1)*C, H, W]
     current_obs = initial_obs.clone()
     
-    # Set up actions (initially all NO_ACTION or from dataset if available)
-    if initial_actions is not None and initial_actions.shape[1] == seq_len - 1:
-        # Use actions from dataset
-        actions = [one_hot_encode(initial_actions[0, i].argmax().item(), dtype=dtype).to(args.device) 
-                  for i in range(initial_actions.shape[1])]
-    else:
-        # Default to NO_ACTION
-        actions = [one_hot_encode(4, dtype=dtype).to(args.device) for _ in range(seq_len)]
+    # # Set up actions (initially all NO_ACTION or from dataset if available)
+    # if initial_actions is not None and initial_actions.shape[1] == seq_len - 1:
+    #     # Use actions from dataset
+    #     actions = [one_hot_encode(initial_actions[0, i].argmax().item(), dtype=dtype).to(args.device) 
+    #               for i in range(initial_actions.shape[1])]
+    # else:
+    #     # Default to NO_ACTION
+    #     actions = [one_hot_encode(4, dtype=dtype).to(args.device) for _ in range(seq_len)]
     
+    actions = initial_actions.clone()
+
     # Main loop
     running = True
     current_action = 4  # Start with NO_ACTION
@@ -344,7 +349,7 @@ def run_pacman_inference(config, args):
         # Prepare inputs for model
         # 1. Add batch dimension to obs tensor (format is already [(seq_len-1)*C, H, W])
         obs_tensor = current_obs.unsqueeze(0)  # Add batch dimension [1, (seq_len-1)*C, H, W]
-        
+
         # Debug prints
         if args.debug:
             print(f"Observation tensor shape: {obs_tensor.shape}")
