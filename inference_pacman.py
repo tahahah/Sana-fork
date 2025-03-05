@@ -339,7 +339,7 @@ def run_pacman_inference(config, args):
                         current_action = 4  # Reset to NO_ACTION when key is released
         
         # Update action sequence
-        actions.append(one_hot_encode(current_action, dtype=dtype).to(args.device))
+        actions = torch.cat([actions[1:], one_hot_encode(current_action, dtype=dtype).to(args.device).unsqueeze(0)], dim=0)
         actions = actions[1:]  # Remove oldest action
         
         if args.debug:
