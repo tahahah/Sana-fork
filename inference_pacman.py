@@ -1,5 +1,6 @@
 # Inference script for Pacman model
 import os
+import os.path as osp
 import time
 import numpy as np
 import torch
