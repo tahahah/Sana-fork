@@ -295,7 +295,7 @@ def run_pacman_inference(config, args):
     # Set up the current input frame
     current_img = initial_img.clone()
     
-    # Set up the observation history
+    # Set up the observation history - should be in format [(seq_len-1)*C, H, W]
     current_obs = initial_obs.clone()
     
     # Set up actions (initially all NO_ACTION or from dataset if available)
@@ -342,40 +342,25 @@ def run_pacman_inference(config, args):
             print(f"Actions sequence: {[a.argmax().item() for a in actions]}")
             
         # Prepare inputs for model
-        # 1. Use the current observation frames
+        # 1. Add batch dimension to obs tensor (format is already [(seq_len-1)*C, H, W])
         obs_tensor = current_obs.unsqueeze(0)  # Add batch dimension [1, (seq_len-1)*C, H, W]
         
         # Debug prints
         if args.debug:
             print(f"Observation tensor shape: {obs_tensor.shape}")
         
-        # 2. Encode observation frames with VAE
-        with torch.no_grad():
-            # Move to VAE device
-            obs_tensor = obs_tensor.to(vae_device)
-            
-            # Encode observations
-            encoded_obs = vae_encode(config.vae.vae_type, vae, obs_tensor, vae_device)
-            
-            if args.debug:
-                print(f"Encoded observations shape: {encoded_obs.shape}")
-            
-            # Move back to model device
-            encoded_obs = encoded_obs.to(model_device)
+        # 2. Get the current input frame [C, H, W]
+        img_tensor = current_img.unsqueeze(0)  # Add batch dimension [1, C, H, W]
         
-        # 3. Get the current input frame and encode it
-        img_tensor = current_img.unsqueeze(0)  # Add batch dim [1, C, H, W]
+        # Debug prints
+        if args.debug:
+            print(f"Input image tensor shape: {img_tensor.shape}")
         
-        # Ensure image is on the same device as VAE
-        img_tensor = img_tensor.to(vae_device)
-        with torch.no_grad():
-            encoded_img = vae_encode(config.vae.vae_type, vae, img_tensor, vae_device)
-            
-            if args.debug:
-                print(f"Encoded image shape: {encoded_img.shape}")
-            
-            # Move to model device
-            encoded_img = encoded_img.to(model_device)
+        # 3. Generate initial noise like the input frame
+        z = torch.randn_like(img_tensor)
+        
+        if args.debug:
+            print(f"Z shape: {z.shape}")
         
         # 4. Prepare action tensor: [B, 1, S, A]
         action_tensor = torch.stack(actions).unsqueeze(0).unsqueeze(1)  # [S, A] -> [1, 1, S, A]
@@ -388,16 +373,16 @@ def run_pacman_inference(config, args):
         null_action = torch.zeros_like(action_tensor)
         null_action[:, :, :, -1] = 1.0  # Set last dimension (NO_ACTION) to 1.0
         
-        # 6. Prepare model kwargs
-        hw = [encoded_img.shape[-2], encoded_img.shape[-1]]
+        # 6. Prepare model kwargs - pass observations directly as in run_sampling
+        hw = [img_tensor.shape[-2], img_tensor.shape[-1]]
         ar = hw[0] / hw[1]
         model_kwargs = {
             "data_info": {"img_hw": hw, "aspect_ratio": ar},
             "mask": None,
-            "obs": encoded_obs,
+            "obs": obs_tensor.to(model_device),  # Move to model device
         }
         
-        # 7. Set up DPM solver
+        # 7. Set up DPM solver and run directly on z (no pre-encoding with VAE needed)
         dpm_solver = DPMS(
             model.forward_with_dpmsolver,
             condition=action_tensor,
@@ -408,12 +393,13 @@ def run_pacman_inference(config, args):
             schedule="FLOW",
         )
         
-        # 8. Generate noise for input
-        z = torch.randn_like(encoded_img)
-        
-        # 9. Run the model to generate the next frame
+        # 8. Run the model - note: in run_sampling, the model is run on raw z, not encoded z
         with torch.no_grad():
-            # Run the diffusion model
+            # Run the diffusion model directly on z (noise tensor)
+            # Make sure z is on the right device
+            z = z.to(model_device)
+            
+            # Run the sampling
             denoised = dpm_solver.sample(
                 z,
                 steps=40,
@@ -423,7 +409,8 @@ def run_pacman_inference(config, args):
                 flow_shift=config.scheduler.flow_shift,
             )
             
-            # Decode the output
+            # Decode the output with the VAE
+            denoised = denoised.to(vae_device, dtype=torch.float16)
             output_frame = vae_decode(config.vae.vae_type, vae, denoised)
             
             if args.debug:
@@ -453,15 +440,16 @@ def run_pacman_inference(config, args):
         # 1. Update the input frame with the generated frame
         current_img = output_frame[0].detach().cpu()
         
-        # 2. Update the observation frames
-        # Shift the existing observation frames
+        # 2. Update the observation frames by shifting
+        # The obs format is [(seq_len-1)*C, H, W]
         C = 3  # RGB channels
-        seq_channels = C * (seq_len - 1)
+        channel_per_frame = C  # Each frame has C channels
+        total_channels = current_obs.shape[0]  # Total channels in observations
         
-        # Extract all but the last C channels
-        if seq_channels > C:
-            new_obs_start = current_obs[C:].clone()
-            # Concatenate with the current input frame
+        if total_channels > channel_per_frame:
+            # Remove the oldest frame's channels
+            new_obs_start = current_obs[channel_per_frame:].clone()
+            # Add the current input frame channels
             new_obs = torch.cat([new_obs_start, current_img], dim=0)
         else:
             # If we only have one frame in history, just use the current frame
