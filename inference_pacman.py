@@ -356,45 +356,31 @@ def run_pacman_inference(config, args):
         if args.debug:
             print(f"Input image tensor shape: {img_tensor.shape}")
         
-        # 3. Encode observations with VAE if needed
-        with torch.no_grad():
-            # Move to VAE device
-            obs_tensor_vae = obs_tensor.to(vae_device)
-            
-            # Encode observations
-            encoded_obs = vae_encode(config.vae.vae_type, vae, obs_tensor_vae, vae_device)
-            
-            if args.debug:
-                print(f"Encoded observations shape: {encoded_obs.shape}")
-        
-        # 4. Generate initial noise with the same shape as the latent
-        # We determine the latent shape by encoding a sample image
-        with torch.no_grad():
-            img_sample = img_tensor.to(vae_device)
-            encoded_img_sample = vae_encode(config.vae.vae_type, vae, img_sample, vae_device)
-            z = torch.randn_like(encoded_img_sample)
+        # 3. Generate initial noise like the input frame
+        # This matches run_sampling which uses torch.randn_like(img)
+        z = torch.randn_like(img_tensor)
         
         if args.debug:
             print(f"Z shape: {z.shape}")
         
-        # 5. Prepare action tensor: [B, 1, S, A]
+        # 4. Prepare action tensor: [B, 1, S, A]
         action_tensor = torch.stack(actions).unsqueeze(0).unsqueeze(1)  # [S, A] -> [1, 1, S, A]
         action_tensor = action_tensor.to(model_device)
         
         if args.debug:
             print(f"Action tensor shape: {action_tensor.shape}")
             
-        # 5b. Create null action tensor for classifier-free guidance
+        # 5. Create null action tensor for classifier-free guidance
         null_action = torch.zeros_like(action_tensor)
         null_action[:, :, :, -1] = 1.0  # Set last dimension (NO_ACTION) to 1.0
         
-        # 6. Prepare model kwargs - pass encoded observations
-        hw = [encoded_img_sample.shape[-2], encoded_img_sample.shape[-1]]
+        # 6. Prepare model kwargs - pass observations directly as in run_sampling
+        hw = [img_tensor.shape[-2], img_tensor.shape[-1]]
         ar = hw[0] / hw[1]
         model_kwargs = {
             "data_info": {"img_hw": hw, "aspect_ratio": ar},
             "mask": None,
-            "obs": encoded_obs.to(model_device),  # Move encoded obs to model device
+            "obs": obs_tensor.to(model_device),  # Pass raw observations directly to model
         }
         
         # 7. Set up DPM solver and run directly on z (no pre-encoding with VAE needed)
@@ -454,7 +440,7 @@ def run_pacman_inference(config, args):
         
         # Update for next iteration
         # 1. Update the input frame with the raw denoised output (not decoded)
-        current_img = vae_decode(config.vae.vae_type, vae, denoised.to(vae_device))[0].detach().cpu()
+        current_img = denoised[0].detach().cpu()
         
         # 2. Update the observation frames by shifting
         # The obs format is [(seq_len-1)*C, H, W]
