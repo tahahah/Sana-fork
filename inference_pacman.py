@@ -301,17 +301,15 @@ def run_pacman_inference(config, args):
     # Set up the observation history - should be in format [(seq_len-1)*C, H, W]
     current_obs = initial_obs.clone()
     
-    # # Set up actions (initially all NO_ACTION or from dataset if available)
-    # if initial_actions is not None and initial_actions.shape[1] == seq_len - 1:
-    #     # Use actions from dataset
-    #     actions = [one_hot_encode(initial_actions[0, i].argmax().item(), dtype=dtype).to(args.device) 
-    #               for i in range(initial_actions.shape[1])]
-    # else:
-    #     # Default to NO_ACTION
-    #     actions = [one_hot_encode(4, dtype=dtype).to(args.device) for _ in range(seq_len)]
+    # Set up actions (initially all NO_ACTION or from dataset if available)
+    if initial_actions is not None and initial_actions.shape[1] == seq_len - 1:
+        # Use actions from dataset
+        actions_tensor = initial_actions.clone()
+    else:
+        # Default to NO_ACTION (4) for all actions
+        actions_tensor = torch.zeros((1, seq_len - 1, 5), dtype=dtype, device=args.device)
+        actions_tensor[:, :, 4] = 1.0  # Set NO_ACTION (last dimension) to 1.0
     
-    actions = initial_actions.clone()
-
     # Main loop
     running = True
     current_action = 4  # Start with NO_ACTION
@@ -339,12 +337,21 @@ def run_pacman_inference(config, args):
                         current_action = 4  # Reset to NO_ACTION when key is released
         
         # Update action sequence
-        actions = torch.cat([actions[1:], one_hot_encode(current_action, dtype=dtype).to(args.device).unsqueeze(0)], dim=0)
-        actions = actions[1:]  # Remove oldest action
+        # Create one-hot encoded action tensor for the current action
+        new_action = torch.zeros(1, 1, 5, dtype=dtype, device=args.device)
+        new_action[0, 0, current_action] = 1.0
+        
+        # Shift actions and add new action
+        if actions_tensor.shape[1] > 1:
+            # Remove oldest action and add new one at the end
+            actions_tensor = torch.cat([actions_tensor[:, 1:], new_action], dim=1)
+        else:
+            # If we only have one action slot, just replace it
+            actions_tensor = new_action
         
         if args.debug:
             print(f"Current action: {current_action}")
-            print(f"Actions sequence: {[a.argmax().item() for a in actions]}")
+            print(f"Actions sequence: {[actions_tensor[0, i].argmax().item() for i in range(actions_tensor.shape[1])]}")
             
         # Prepare inputs for model
         # 1. Add batch dimension to obs tensor (format is already [(seq_len-1)*C, H, W])
@@ -369,7 +376,7 @@ def run_pacman_inference(config, args):
             print(f"Z shape: {z.shape}")
         
         # 4. Prepare action tensor: [B, 1, S, A]
-        action_tensor = torch.stack(actions).unsqueeze(0).unsqueeze(1)  # [S, A] -> [1, 1, S, A]
+        action_tensor = actions_tensor.unsqueeze(1)  # [B, S, A] -> [B, 1, S, A]
         action_tensor = action_tensor.to(model_device)
         
         if args.debug:
