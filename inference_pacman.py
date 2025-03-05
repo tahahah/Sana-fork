@@ -28,8 +28,8 @@ ACTION_MAP = {
     pygame.K_RIGHT: 1,   # RIGHT
     pygame.K_UP: 2,      # UP
     pygame.K_DOWN: 3,    # DOWN
-    None: 4             # NO_ACTION
 }
+NO_ACTION = 4  # Define NO_ACTION separately
 
 @dataclass
 class InferenceArgs:
@@ -308,11 +308,11 @@ def run_pacman_inference(config, args):
     else:
         # Default to NO_ACTION (4) for all actions
         actions_tensor = torch.zeros((1, seq_len - 1, 5), dtype=dtype, device=args.device)
-        actions_tensor[:, :, 4] = 1.0  # Set NO_ACTION (last dimension) to 1.0
+        actions_tensor[:, :, NO_ACTION] = 1.0  # Set NO_ACTION (last dimension) to 1.0
     
     # Main loop
     running = True
-    current_action = 4  # Start with NO_ACTION
+    current_action = NO_ACTION  # Start with NO_ACTION
     frame_count = 0
     
     # Create output directory if in headless mode
@@ -339,17 +339,24 @@ def run_pacman_inference(config, args):
                 elif event.type == pygame.KEYUP:
                     if event.key in ACTION_MAP and ACTION_MAP[event.key] == current_action:
                         # Only reset to NO_ACTION if the released key matches the current action
-                        current_action = 4  # Reset to NO_ACTION when key is released
+                        current_action = NO_ACTION  # Reset to NO_ACTION when key is released
                         key_pressed = False
             
             # Check if any arrow keys are currently held down
             keys = pygame.key.get_pressed()
             if not key_pressed:  # Only check if we haven't already processed a key event
-                for key, action in ACTION_MAP.items():
-                    if keys[key]:
-                        current_action = action
-                        key_pressed = True
-                        break
+                if keys[pygame.K_LEFT]:
+                    current_action = 0
+                    key_pressed = True
+                elif keys[pygame.K_RIGHT]:
+                    current_action = 1
+                    key_pressed = True
+                elif keys[pygame.K_UP]:
+                    current_action = 2
+                    key_pressed = True
+                elif keys[pygame.K_DOWN]:
+                    current_action = 3
+                    key_pressed = True
         
         # Update action sequence
         # Create one-hot encoded action tensor for the current action
@@ -399,7 +406,7 @@ def run_pacman_inference(config, args):
             
         # 5. Create null action tensor for classifier-free guidance
         null_action = torch.zeros_like(action_tensor)
-        null_action[:, :, :, -1] = 1.0  # Set last dimension (NO_ACTION) to 1.0
+        null_action[:, :, :, NO_ACTION] = 1.0  # Set last dimension (NO_ACTION) to 1.0
         
         # 6. Prepare model kwargs - pass observations directly as in run_sampling
         hw = [img_tensor.shape[-2], img_tensor.shape[-1]]
