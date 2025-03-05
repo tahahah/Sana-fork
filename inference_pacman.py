@@ -437,7 +437,7 @@ def run_pacman_inference(config, args):
             # Run the sampling
             denoised = dpm_solver.sample(
                 z,
-                steps=10,
+                steps=20,
                 order=2,
                 skip_type="time_uniform_flow",
                 method="multistep",
