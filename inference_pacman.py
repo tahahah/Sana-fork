@@ -119,9 +119,6 @@ def setup_model(config, checkpoint_path=None, device='cuda', debug=False):
         _, missing, unexpected, rng_state = load_checkpoint(
             **config.model.resume_from,
             model=model,
-            optimizer=optimizer,
-            lr_scheduler=lr_scheduler,
-            null_embed_path=null_embed_path,
         )
 
         logger.warning(f"Missing keys: {missing}")
