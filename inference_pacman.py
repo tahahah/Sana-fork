@@ -121,8 +121,8 @@ def setup_model(config, checkpoint_path=None, device='cuda', debug=False):
             model=model,
         )
 
-        logger.warning(f"Missing keys: {missing}")
-        logger.warning(f"Unexpected keys: {unexpected}")
+        print(f"Missing keys: {missing}")
+        print(f"Unexpected keys: {unexpected}")
 
         path = osp.basename(config.model.resume_from["checkpoint"])
     
