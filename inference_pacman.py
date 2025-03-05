@@ -100,24 +100,33 @@ def setup_model(config, checkpoint_path=None, device='cuda', debug=False):
         print(model)
     
     # Load checkpoint if provided
-    if checkpoint_path:
-        print(f"Loading checkpoint from {checkpoint_path}")
-        # Create null_embed_path in the same way as train_pacman.py
-        null_embed_path = None
-        if os.path.exists("null_embed.pth"):
-            null_embed_path = "null_embed.pth"
-        
-        # Load checkpoint
-        epoch, missing, unexpected, _ = load_checkpoint(
-            checkpoint_path, 
-            model,
-            null_embed_path=null_embed_path
+    ckpt_path = osp.join(config.work_dir, "checkpoints")
+    check_flag = osp.exists(ckpt_path) and len(os.listdir(ckpt_path)) != 0
+    if config.model.resume_from["checkpoint"] == "latest":
+        if check_flag:
+            checkpoints = os.listdir(ckpt_path)
+            if "latest.pth" in checkpoints and osp.exists(osp.join(ckpt_path, "latest.pth")):
+                config.model.resume_from["checkpoint"] = osp.realpath(osp.join(ckpt_path, "latest.pth"))
+            else:
+                checkpoints = [i for i in checkpoints if i.startswith("epoch_")]
+                checkpoints = sorted(checkpoints, key=lambda x: int(x.replace(".pth", "").split("_")[3]))
+                config.model.resume_from["checkpoint"] = osp.join(ckpt_path, checkpoints[-1])
+        else:
+            config.model.resume_from["checkpoint"] = config.model.load_from
+
+    if config.model.resume_from["checkpoint"] is not None:
+        _, missing, unexpected, rng_state = load_checkpoint(
+            **config.model.resume_from,
+            model=model,
+            optimizer=optimizer,
+            lr_scheduler=lr_scheduler,
+            null_embed_path=null_embed_path,
         )
-        print(f"Loaded checkpoint from epoch {epoch}")
-        if missing:
-            print(f"Missing keys: {missing}")
-        if unexpected:
-            print(f"Unexpected keys: {unexpected}")
+
+        logger.warning(f"Missing keys: {missing}")
+        logger.warning(f"Unexpected keys: {unexpected}")
+
+        path = osp.basename(config.model.resume_from["checkpoint"])
     
     # Move model to device and eval mode
     model = model.to(device)
