@@ -259,7 +259,7 @@ def run_pacman_inference(config, args):
     cache_dir.mkdir(exist_ok=True)
     
     # Create a unique cache key based on config settings
-    cache_key = f"pacman_init_frames_{config.model.image_size}_{seq_len}_{config.data.name}"
+    cache_key = f"pacman_init_frames_{config.model.image_size}_{seq_len}_{config.data.type}"
     cache_file = cache_dir / f"{cache_key}.pt"
     
     # Check if cache exists and we want to use it
