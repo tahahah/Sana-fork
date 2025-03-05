@@ -101,30 +101,55 @@ def setup_model(config, checkpoint_path=None, device='cuda', debug=False):
         print(model)
     
     # Load checkpoint if provided
-    ckpt_path = osp.join(config.train.work_dir, "checkpoints")
-    check_flag = osp.exists(ckpt_path) and len(os.listdir(ckpt_path)) != 0
-    if config.model.resume_from is not None and config.model.resume_from.get("checkpoint", "") == "latest":
+    checkpoint_path = None
+    if args.checkpoint:
+        checkpoint_path = args.checkpoint
+    elif config.model.resume_from is not None and config.model.resume_from.get("checkpoint", "") == "latest":
+        ckpt_path = osp.join(config.train.work_dir, "checkpoints")
+        check_flag = osp.exists(ckpt_path) and len(os.listdir(ckpt_path)) != 0
         if check_flag:
             checkpoints = os.listdir(ckpt_path)
             if "latest.pth" in checkpoints and osp.exists(osp.join(ckpt_path, "latest.pth")):
-                config.model.resume_from["checkpoint"] = osp.realpath(osp.join(ckpt_path, "latest.pth"))
+                checkpoint_path = osp.realpath(osp.join(ckpt_path, "latest.pth"))
+                print(f"Using latest.pth: {checkpoint_path}")
             else:
                 checkpoints = [i for i in checkpoints if i.startswith("epoch_")]
-                checkpoints = sorted(checkpoints, key=lambda x: int(x.replace(".pth", "").split("_")[3]))
-                config.model.resume_from["checkpoint"] = osp.join(ckpt_path, checkpoints[-1])
-        else:
-            config.model.resume_from["checkpoint"] = config.model.load_from
+                if checkpoints:
+                    checkpoints = sorted(checkpoints, key=lambda x: int(x.replace(".pth", "").split("_")[3]))
+                    checkpoint_path = osp.join(ckpt_path, checkpoints[-1])
+                    print(f"Using latest checkpoint by step: {checkpoint_path}")
 
-    if config.model.resume_from["checkpoint"] is not None:
-        _, missing, unexpected, rng_state = load_checkpoint(
-            **config.model.resume_from,
-            model=model,
-        )
-
-        print(f"Missing keys: {missing}")
-        print(f"Unexpected keys: {unexpected}")
-
-        path = osp.basename(config.model.resume_from["checkpoint"])
+    if checkpoint_path:
+        print(f"Loading checkpoint from {checkpoint_path}")
+        try:
+            # Load the checkpoint file directly with torch.load
+            checkpoint = torch.load(checkpoint_path, map_location="cpu")
+            print("Checkpoint loaded successfully")
+            
+            # Process the checkpoint data
+            state_dict_keys = ["pos_embed", "base_model.pos_embed", "model.pos_embed"]
+            for key in state_dict_keys:
+                if key in checkpoint["state_dict"]:
+                    del checkpoint["state_dict"][key]
+                    if "state_dict_ema" in checkpoint and key in checkpoint["state_dict_ema"]:
+                        del checkpoint["state_dict_ema"][key]
+                    break
+            
+            # Get the state dict
+            state_dict = checkpoint.get("state_dict", checkpoint)
+            
+            # Load state dict into model
+            missing, unexpected = model.load_state_dict(state_dict, strict=False)
+            
+            print(f"Successfully loaded checkpoint")
+            if missing:
+                print(f"Missing keys: {missing}")
+            if unexpected:
+                print(f"Unexpected keys: {unexpected}")
+        except Exception as e:
+            print(f"Error loading checkpoint: {e}")
+            import traceback
+            traceback.print_exc()
     
     # Move model to device and eval mode
     model = model.to(device)
