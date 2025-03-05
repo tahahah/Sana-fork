@@ -452,7 +452,8 @@ def run_pacman_inference(config, args):
         
         # Update for next iteration
         # 1. Update the input frame with the raw denoised output (not decoded)
-        current_img = denoised[0].detach().cpu()
+        # Make sure it's on the same device as current_obs
+        current_img = denoised[0].detach().to(args.device)
         
         # 2. Update the observation frames by shifting
         # The obs format is [(seq_len-1)*C, H, W]
@@ -463,8 +464,8 @@ def run_pacman_inference(config, args):
         if total_channels > channel_per_frame:
             # Remove the oldest frame's channels
             new_obs_start = current_obs[channel_per_frame:].clone()
-            # Add the current input frame channels
-            new_obs = torch.cat([new_obs_start, current_img], dim=0)
+            # Add the current input frame channels - ensure both tensors are on the same device
+            new_obs = torch.cat([new_obs_start.to(args.device), current_img.to(args.device)], dim=0)
         else:
             # If we only have one frame in history, just use the current frame
             new_obs = current_img.clone()
