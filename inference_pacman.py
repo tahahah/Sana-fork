@@ -45,6 +45,8 @@ class InferenceArgs:
     headless: bool = False  # Run without display (for SSH)
     output_dir: str = "output/frames"  # Directory to save frames when in headless mode
     save_frames: bool = False  # Save frames even in non-headless mode
+    cache_dir: str = "cache"  # Directory to cache initial frames
+    use_cache: bool = True  # Whether to use cached frames if available
 
 def setup_model(config, checkpoint_path=None, device='cuda', debug=False):
     """
@@ -250,50 +252,97 @@ def run_pacman_inference(config, args):
     print(f"Using precision: {dtype}")
     
     # Load a sample from the dataset for initial frames
-    print("Loading initial frames from dataset...")
-    try:
-        # Build the dataset
-        image_size = config.model.image_size
-        val_dataset = build_dataset(
-            config.data, 
-            resolution=image_size, 
-            aspect_ratio_type=config.model.aspect_ratio_type, 
-            vae_downsample_rate=config.vae.vae_downsample_rate, 
-            vae=vae # We want images to come as raw RGB from dataset, we will encode them after
-        )
-        
-        # Get a sample from the dataset
-        dataset_iter = iter(val_dataset)
-        for _ in range(4):  # Skip the first 4 iterations
-            next(dataset_iter)
-        sample = next(dataset_iter)  # Get the 5th iteration
-
-        # Extract frames from the sample
-        if 'img' in sample and 'obs' in sample:
-            # Get the input frame (img) and observation frames (obs)
-            initial_img = sample['img'].to(args.device, dtype=dtype)
-            initial_obs = sample['obs'].to(args.device, dtype=dtype)
-            print(f"Loaded initial frame from dataset with shape: {initial_img.shape}")
-            print(f"Loaded initial observations with shape: {initial_obs.shape}")
+    print("Loading initial frames...")
+    
+    # Set up cache paths
+    cache_dir = Path(args.cache_dir)
+    cache_dir.mkdir(exist_ok=True)
+    
+    # Create a unique cache key based on config settings
+    cache_key = f"pacman_init_frames_{config.model.image_size}_{seq_len}_{config.data.name}"
+    cache_file = cache_dir / f"{cache_key}.pt"
+    
+    # Check if cache exists and we want to use it
+    if args.use_cache and cache_file.exists():
+        try:
+            print(f"Loading initial frames from cache: {cache_file}")
+            cached_data = torch.load(cache_file, map_location=args.device)
+            initial_img = cached_data['img'].to(args.device, dtype=dtype)
+            initial_obs = cached_data['obs'].to(args.device, dtype=dtype)
+            initial_actions = cached_data.get('actions', None)
+            if initial_actions is not None:
+                initial_actions = initial_actions.to(args.device, dtype=dtype)
+                
+            print(f"Loaded initial frame from cache with shape: {initial_img.shape}")
+            print(f"Loaded initial observations from cache with shape: {initial_obs.shape}")
+            if initial_actions is not None:
+                print(f"Loaded initial actions from cache with shape: {initial_actions.shape}")
+        except Exception as e:
+            print(f"Error loading from cache: {e}")
+            print("Will load from dataset instead")
+            # Continue to dataset loading
+            args.use_cache = False
+    
+    # If cache doesn't exist or we're not using it, load from dataset
+    if not args.use_cache or not cache_file.exists():
+        print("Loading initial frames from dataset...")
+        try:
+            # Build the dataset
+            image_size = config.model.image_size
+            val_dataset = build_dataset(
+                config.data, 
+                resolution=image_size, 
+                aspect_ratio_type=config.model.aspect_ratio_type, 
+                vae_downsample_rate=config.vae.vae_downsample_rate, 
+                vae=vae # We want images to come as raw RGB from dataset, we will encode them after
+            )
             
-            # Also get actions if available
-            if 'y' in sample:
-                initial_actions = sample['y'].to(args.device, dtype=dtype)
-                print(f"Loaded initial actions with shape: {initial_actions.shape}")
+            # Get a sample from the dataset
+            dataset_iter = iter(val_dataset)
+            for _ in range(4):  # Skip the first 4 iterations
+                next(dataset_iter)
+            sample = next(dataset_iter)  # Get the 5th iteration
+    
+            # Extract frames from the sample
+            if 'img' in sample and 'obs' in sample:
+                # Get the input frame (img) and observation frames (obs)
+                initial_img = sample['img'].to(args.device, dtype=dtype)
+                initial_obs = sample['obs'].to(args.device, dtype=dtype)
+                print(f"Loaded initial frame from dataset with shape: {initial_img.shape}")
+                print(f"Loaded initial observations with shape: {initial_obs.shape}")
+                
+                # Also get actions if available
+                if 'y' in sample:
+                    initial_actions = sample['y'].to(args.device, dtype=dtype)
+                    print(f"Loaded initial actions with shape: {initial_actions.shape}")
+                else:
+                    initial_actions = None
+                    
+                # Save to cache
+                try:
+                    cache_data = {
+                        'img': initial_img.cpu(),
+                        'obs': initial_obs.cpu(),
+                    }
+                    if initial_actions is not None:
+                        cache_data['actions'] = initial_actions.cpu()
+                    
+                    print(f"Saving initial frames to cache: {cache_file}")
+                    torch.save(cache_data, cache_file)
+                except Exception as e:
+                    print(f"Error saving to cache: {e}")
             else:
+                # Fall back to blank frame if dataset doesn't have expected format
+                print("Dataset sample doesn't contain expected fields, using blank frames")
+                initial_img = torch.zeros((3, resolution, resolution), dtype=dtype, device=args.device)
+                initial_obs = torch.zeros((3 * (seq_len - 1), resolution, resolution), dtype=dtype, device=args.device)
                 initial_actions = None
-        else:
-            # Fall back to blank frame if dataset doesn't have expected format
-            print("Dataset sample doesn't contain expected fields, using blank frames")
+        except Exception as e:
+            print(f"Error loading from dataset: {e}")
+            print("Using blank frames instead")
             initial_img = torch.zeros((3, resolution, resolution), dtype=dtype, device=args.device)
             initial_obs = torch.zeros((3 * (seq_len - 1), resolution, resolution), dtype=dtype, device=args.device)
             initial_actions = None
-    except Exception as e:
-        print(f"Error loading from dataset: {e}")
-        print("Using blank frames instead")
-        initial_img = torch.zeros((3, resolution, resolution), dtype=dtype, device=args.device)
-        initial_obs = torch.zeros((3 * (seq_len - 1), resolution, resolution), dtype=dtype, device=args.device)
-        initial_actions = None
     
     # Set up the current input frame
     current_img = initial_img.clone()
