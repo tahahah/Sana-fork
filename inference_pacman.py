@@ -258,7 +258,7 @@ def run_pacman_inference(config, args):
             resolution=image_size, 
             aspect_ratio_type=config.model.aspect_ratio_type, 
             vae_downsample_rate=config.vae.vae_downsample_rate, 
-            vae=vae
+            vae=None # We want images to come as raw RGB from dataset, we will encode them after
         )
         
         # Get a sample from the dataset
@@ -355,7 +355,7 @@ def run_pacman_inference(config, args):
             obs_tensor = obs_tensor.to(vae_device)
             
             # Encode observations
-            encoded_obs = vae_encode(config.vae.vae_type, vae, obs_tensor)
+            encoded_obs = vae_encode(config.vae.vae_type, vae, obs_tensor, vae_device)
             
             if args.debug:
                 print(f"Encoded observations shape: {encoded_obs.shape}")
@@ -369,7 +369,7 @@ def run_pacman_inference(config, args):
         # Ensure image is on the same device as VAE
         img_tensor = img_tensor.to(vae_device)
         with torch.no_grad():
-            encoded_img = vae_encode(config.vae.vae_type, vae, img_tensor)
+            encoded_img = vae_encode(config.vae.vae_type, vae, img_tensor, vae_device)
             
             if args.debug:
                 print(f"Encoded image shape: {encoded_img.shape}")
