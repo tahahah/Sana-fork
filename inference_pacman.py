@@ -323,6 +323,9 @@ def run_pacman_inference(config, args):
     while running:
         # Handle events
         if not args.headless:
+            # Track if any key is currently pressed
+            key_pressed = False
+            
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     running = False
@@ -331,10 +334,22 @@ def run_pacman_inference(config, args):
                         running = False
                     elif event.key in ACTION_MAP:
                         current_action = ACTION_MAP[event.key]
+                        key_pressed = True
                         print(f"Action: {current_action}")
                 elif event.type == pygame.KEYUP:
-                    if event.key in ACTION_MAP:
+                    if event.key in ACTION_MAP and ACTION_MAP[event.key] == current_action:
+                        # Only reset to NO_ACTION if the released key matches the current action
                         current_action = 4  # Reset to NO_ACTION when key is released
+                        key_pressed = False
+            
+            # Check if any arrow keys are currently held down
+            keys = pygame.key.get_pressed()
+            if not key_pressed:  # Only check if we haven't already processed a key event
+                for key, action in ACTION_MAP.items():
+                    if keys[key]:
+                        current_action = action
+                        key_pressed = True
+                        break
         
         # Update action sequence
         # Create one-hot encoded action tensor for the current action
@@ -415,7 +430,7 @@ def run_pacman_inference(config, args):
             # Run the sampling
             denoised = dpm_solver.sample(
                 z,
-                steps=40,
+                steps=20,
                 order=2,
                 skip_type="time_uniform_flow",
                 method="multistep",
