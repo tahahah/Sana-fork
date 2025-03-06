@@ -215,7 +215,7 @@ class PacmanDataset(IterableDataset):
         # Add noise to observation frames
         obs_frames = frames[:-C, :, :]  # Get observation frames
         noise = torch.randn_like(obs_frames)
-        noisy_obs = obs_frames + 0.3 * torch.rand(1).item() * noise  # Additive noise with random scaling
+        noisy_obs = obs_frames + 0.9 * torch.rand(1).item() * noise  # Additive noise with random scaling
         
         return {
             'obs': noisy_obs,  # [(seq_len-1)*C, H, W] with noise

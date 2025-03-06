@@ -11,7 +11,7 @@ data:
   sort_dataset: false
 # model config
 model:
-  model: SanaMS_PACMAN_P1_D12
+  model: SanaMS_PACMAN_P1_D20
   image_size: 512
   in_channels: 3
   mixed_precision: fp16
