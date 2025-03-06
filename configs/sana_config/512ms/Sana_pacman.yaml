@@ -22,7 +22,7 @@ model:
   aspect_ratio_type: ASPECT_RATIO_512
   multi_scale: false
   attn_type: linear
-  linear_head_dim: 32
+  linear_head_dim: 40
   ffn_type: glumbconv
   mlp_acts:
     - silu
