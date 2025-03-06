@@ -439,7 +439,7 @@ def SanaMS_PACMAN_P1_D20(**kwargs):
     """Factory function for PacmanDiffusionModel following Sana naming convention."""
     return PacmanDiffusionModel(
         depth=20,
-        hidden_size=560,
+        hidden_size=640,
         patch_size=1,
         num_heads=20,
         **kwargs
