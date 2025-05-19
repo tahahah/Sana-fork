@@ -395,10 +395,10 @@ def run_pacman_inference(config, args):
             keys = pygame.key.get_pressed()
             if not key_pressed:  # Only check if we haven't already processed a key event
                 if keys[pygame.K_LEFT]:
-                    current_action = 0
+                    current_action = 1
                     key_pressed = True
                 elif keys[pygame.K_RIGHT]:
-                    current_action = 1
+                    current_action = 0
                     key_pressed = True
                 elif keys[pygame.K_UP]:
                     current_action = 2
@@ -410,7 +410,7 @@ def run_pacman_inference(config, args):
         # Update action sequence
         # Create one-hot encoded action tensor for the current action
         new_action = torch.zeros(1, 1, 5, dtype=dtype, device=args.device)
-        new_action[0, 0, current_action] = 1.0
+        new_action[0, 0, current_action] = 1
         
         # Shift actions and add new action
         if actions_tensor.shape[1] > 1:
