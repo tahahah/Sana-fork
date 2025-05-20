@@ -1,0 +1,85 @@
+/* This is the main CSS file. */
+
+/* 1. Body/General */
+body {
+    font-family: sans-serif;
+    margin: 20px;
+    padding: 0;
+    background-color: #f4f4f4;
+    color: #333;
+}
+
+h1 {
+    text-align: center;
+    color: #222;
+}
+
+/* 2. Controls Area */
+.controls {
+    margin-bottom: 30px;
+    text-align: center; /* Center the controls */
+}
+
+.controls label {
+    margin-right: 5px;
+}
+
+.controls input[type="number"],
+.controls button {
+    padding: 8px 12px;
+    margin-right: 10px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+}
+
+.controls button {
+    background-color: #007bff;
+    color: white;
+    cursor: pointer;
+}
+
+.controls button:hover {
+    background-color: #0056b3;
+}
+
+/* 3. Visualization Container */
+#visualizationContainer {
+    display: flex; /* Use Flexbox */
+    flex-wrap: wrap; /* Allow wrapping */
+    justify-content: center; /* Center items if they don't fill the row */
+    padding: 15px;
+    border: 1px solid #ddd;
+    background-color: #fff;
+    min-height: 200px; /* Ensure it's visible even when empty */
+}
+
+/* 4. Frame Item */
+.frame-item {
+    margin: 10px;
+    padding: 10px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    background-color: #f9f9f9;
+    display: flex;
+    flex-direction: column; /* Stack image and label vertically */
+    align-items: center; /* Center content horizontally */
+    width: auto; /* Adjust based on content, or set a fixed width if preferred */
+}
+
+.frame-item img {
+    max-width: 128px; /* Default max-width, can be overridden by JS if needed */
+    max-height: 128px; /* Default max-height */
+    border: 1px solid #eee;
+    margin-bottom: 8px; /* Space between image and label */
+}
+
+/* 5. Action Label */
+.action-label {
+    font-size: 0.9em;
+    text-align: center;
+    margin-top: 5px; /* Ensure some space if margin-bottom from img is removed */
+    padding: 5px;
+    min-width: 80px; /* Give it some width */
+    font-weight: bold;
+    color: #555; /* Default color, JS will override */
+}
