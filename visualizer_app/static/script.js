@@ -83,12 +83,13 @@ function renderSequence(sequence) {
 }
 
 async function fetchAndDisplaySequence() {
-    // Default parameters for the API request
-    const numDisplayFrames = 8;
-    const maxAbsOffset = 5; // This is context_window_half
+    // Default parameters for the API request, matching backend defaults
     const resolution = 128;
+    const pacman_sequence_length = 8; // PacmanDataset's sequence_length is L.
+                                       // The visualizer will display L-1 frames.
 
-    const apiUrl = `/api/sequence?num_display_frames=${numDisplayFrames}&max_abs_offset=${maxAbsOffset}&resolution=${resolution}`;
+    // Construct the API URL with the new parameters
+    const apiUrl = `/api/sequence?resolution=${resolution}&pacman_sequence_length=${pacman_sequence_length}`;
 
     try {
         const response = await fetch(apiUrl);

@@ -23,15 +23,17 @@ async def read_root(request: Request):
 @app.get("/api/sequence")
 async def get_sequence_data(
     resolution: int = 128,
-    num_display_frames: int = 8,
-    max_abs_offset: int = 5  # This is context_window_half
+    pacman_sequence_length: int = 8 # PacmanDataset's sequence_length is L.
+                                      # The visualizer will display L-1 frames.
 ):
     try:
-        loader = VisualizationDataLoader(resolution=resolution)
-        viz_data = loader.get_visualization_data(
-            num_display_frames=num_display_frames,
-            context_window_half=max_abs_offset
+        # Instantiate VisualizationDataLoader with the new parameters
+        loader = VisualizationDataLoader(
+            resolution=resolution,
+            pacman_sequence_length=pacman_sequence_length
         )
+        # get_visualization_data now takes no parameters
+        viz_data = loader.get_visualization_data() 
         return {"sequence_data": viz_data}
     except Exception as e:
         # Basic error handling for now
