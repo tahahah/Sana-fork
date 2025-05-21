@@ -7,7 +7,7 @@ import os
 import shutil
 # from collections import deque # Deque might not be needed anymore
 # from datasets import load_dataset # Removed
-from .pacman_dataset_copy import PacmanDataset # Added
+from pacman_dataset_copy import PacmanDataset # Added
 import logging
 
 # Constants

@@ -8,8 +8,8 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-# Corrected relative import assuming main.py is in visualizer_app and data_loader.py is in the same directory
-from .data_loader import VisualizationDataLoader 
+# Corrected absolute import assuming main.py is in visualizer_app and data_loader.py is in the same directory
+from data_loader import VisualizationDataLoader 
 
 # Define absolute paths for static and templates directories
 MAIN_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
