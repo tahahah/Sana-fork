@@ -235,72 +235,78 @@ def log_validation(accelerator, config, model, logger, step, device, vae=None, i
             print(f"Debug - samples shape: {samples.shape}")
             image = Image.fromarray(samples) # This is the predicted PIL image
 
-            # --- Detailed WandB Logging --- 
-            if accelerator.is_main_process and idx == 0: # Log for the first item in batch only, for now
+            # --- Detailed WandB Logging Preparation (for idx == 0) ---
+            if accelerator.is_main_process and idx == 0: # Prepare detailed log only for the first item in the batch
                 val_dataset_instance = val_dataloader.dataset
                 raw_data = val_dataset_instance.get_last_raw_validation_data()
 
                 if raw_data and raw_data['raw_frames']:
                     ACTION_ID_TO_STRING = {0: "Left", 1: "Right", 2: "Up", 3: "Down", 4: "No Action"}
-                    wandb_images_to_log = []
+                    # Initialize wandb_images_to_log here, specific to this idx == 0 block
+                    # This ensures it's defined before being used by detailed_log_payload_for_wandb
+                    wandb_images_to_log = [] 
                     
                     num_total_raw_frames = len(raw_data['raw_frames'])
-                    # Log up to 4 context frames + 1 target frame. raw_frames = [context..., target]
-                    # sequence_length from config is model's view (e.g., 5 = 4 context + 1 target)
-                    # We want to show the N context frames that led to the target.
-                    # The raw_data['raw_frames'] should correspond to the sequence_length items.
-                    
-                    # Determine how many context frames to log from the available raw_data
-                    # raw_data['raw_frames'] are [c0, c1, ..., cN-1, target]
-                    # We want to log raw_frames[cN-1-num_log_context_frames : cN-1]
                     num_context_to_display = min(4, num_total_raw_frames - 1)
-                    
                     context_frames_start_idx = (num_total_raw_frames - 1) - num_context_to_display
 
-                    for i in range(context_frames_start_idx, num_total_raw_frames - 1): # Iterate over context frames
-                        if i < 0: continue # Should not happen with proper calculation
-                        pil_img = raw_data['raw_frames'][i]
-                        action_idx = raw_data['raw_actions'][i]
-                        action_str = ACTION_ID_TO_STRING.get(action_idx, "Unknown")
+                    for i_ctx in range(context_frames_start_idx, num_total_raw_frames - 1):
+                        if i_ctx < 0: continue
+                        pil_img = raw_data['raw_frames'][i_ctx]
+                        action_idx_val = raw_data['raw_actions'][i_ctx]
+                        action_str_ctx = ACTION_ID_TO_STRING.get(action_idx_val, "Unknown")
                         
-                        display_frame_num = i - context_frames_start_idx + 1
-                        caption = f"Context {display_frame_num} (Action: {action_str})"
+                        display_frame_num = i_ctx - context_frames_start_idx + 1
+                        caption = f"Context {display_frame_num} (Action: {action_str_ctx})"
                         wandb_images_to_log.append(wandb.Image(pil_img, caption=caption))
 
-                    # Log Target Frame (Raw)
                     if num_total_raw_frames > 0:
                         target_pil_img = raw_data['raw_frames'][-1]
                         wandb_images_to_log.append(wandb.Image(target_pil_img, caption="Target Frame (Raw)"))
 
-                    # Log Predicted Frame (already 'image' variable)
                     wandb_images_to_log.append(wandb.Image(image, caption=f"Predicted Frame{label_suffix}"))
+            # --- End Detailed WandB Logging Preparation ---
 
-                    if wandb_images_to_log:
-                        accelerator.log({f"val/detailed_sequence{label_suffix}": wandb_images_to_log}, step=step)
-            # --- End Detailed WandB Logging ---
-
-            # Convert actions to readable format for logging
+            # Original: Convert actions to readable format for logging (for the main 'validation' log)
             action_names = ['LEFT', 'RIGHT', 'UP', 'DOWN', 'NO_ACTION']
             action_seq = []
-            for i in range(seq_len):
-                action_idx = actions[idx, 0, 0, 0, i].argmax().item()
-                action_seq.append(action_names[action_idx])
-            action_str = ' -> '.join(action_seq)
+            # Corrected loop range for actions: actions is [B, 1, S, A], S = actions.shape[2]
+            for i_act in range(actions.shape[2]): 
+                action_idx_val = actions[idx, 0, i_act].argmax().item()
+                action_seq.append(action_names[action_idx_val])
+            action_str_caption = ' -> '.join(action_seq) # Renamed to avoid conflict
             
             current_image_logs.append({
-                "validation_actions": action_str + label_suffix,
+                "validation_actions": action_str_caption + label_suffix,
                 "images": [image]
             })
+        # End of 'for idx, latent in enumerate(latents):' loop
 
-        return current_image_logs
+        # Prepare detailed log payload (will be None if not idx==0 or not main_process)
+        detailed_payload_for_wandb = None
+        if accelerator.is_main_process and 'wandb_images_to_log' in locals() and wandb_images_to_log:
+            detailed_payload_for_wandb = {'key': f"val/detailed_sequence{label_suffix}", 'images': wandb_images_to_log}
+            
+        return current_image_logs, detailed_payload_for_wandb
+
+    image_logs = []
+    all_detailed_wandb_payloads = []
 
     # Run with original noise
-    image_logs += run_sampling(init_z=None, label_suffix="", vae=vae, sampler=vis_sampler)
+    current_logs_run1, detailed_payload_run1 = run_sampling(init_z=None, label_suffix="", vae=vae, sampler=vis_sampler)
+    if current_logs_run1:
+        image_logs.extend(current_logs_run1)
+    if detailed_payload_run1:
+        all_detailed_wandb_payloads.append(detailed_payload_run1)
 
     # Run with init_noise if provided
     if init_noise is not None:
         init_noise = torch.clone(init_noise).to(device)
-        image_logs += run_sampling(init_z=init_noise, label_suffix=" w/ init noise", vae=vae, sampler=vis_sampler)
+        current_logs_run2, detailed_payload_run2 = run_sampling(init_z=init_noise, label_suffix=" w/ init noise", vae=vae, sampler=vis_sampler)
+        if current_logs_run2:
+            image_logs.extend(current_logs_run2)
+        if detailed_payload_run2:
+            all_detailed_wandb_payloads.append(detailed_payload_run2)
 
     formatted_images = []
     for log in image_logs:
@@ -316,10 +322,16 @@ def log_validation(accelerator, config, model, logger, step, device, vae=None, i
         elif tracker.name == "wandb":
             import wandb
 
-            wandb_images = []
-            for validation_actions, image in formatted_images:
-                wandb_images.append(wandb.Image(image, caption=validation_actions))
-            tracker.log({"validation": wandb_images})
+            wandb_images_for_main_log = []
+            for validation_actions, image_np_array in formatted_images:
+                wandb_images_for_main_log.append(wandb.Image(image_np_array, caption=validation_actions))
+            if wandb_images_for_main_log: # Ensure not empty before logging
+                tracker.log({"validation": wandb_images_for_main_log}, step=step) # Added step for consistency
+
+            # Log the new detailed sequences using direct tracker.log
+            for payload in all_detailed_wandb_payloads:
+                if payload['images']: # Ensure there are images in this payload
+                    tracker.log({payload['key']: payload['images']}, step=step)
         else:
             logger.warn(f"image logging not implemented for {tracker.name}")
 
