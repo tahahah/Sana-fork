@@ -265,7 +265,10 @@ def log_validation(accelerator, config, model, logger, step, device, vae=None, i
                         wandb_images_to_log.append(wandb.Image(target_pil_img, caption="Target Frame (Raw)"))
 
                     wandb_images_to_log.append(wandb.Image(image, caption=f"Predicted Frame{label_suffix}"))
-            # --- End Detailed WandB Logging Preparation ---
+                print(f"[DEBUG run_sampling] wandb_images_to_log populated with {len(wandb_images_to_log)} images for detailed log.") # DEBUG
+            else: # DEBUG
+                print(f"[DEBUG run_sampling] No raw_data or raw_frames found for detailed log.") # DEBUG
+        # --- End Detailed WandB Logging Preparation ---
 
             # Original: Convert actions to readable format for logging (for the main 'validation' log)
             action_names = ['LEFT', 'RIGHT', 'UP', 'DOWN', 'NO_ACTION']
@@ -285,9 +288,10 @@ def log_validation(accelerator, config, model, logger, step, device, vae=None, i
         # Prepare detailed log payload (will be None if not idx==0 or not main_process)
         detailed_payload_for_wandb = None
         if accelerator.is_main_process and 'wandb_images_to_log' in locals() and wandb_images_to_log:
-            detailed_payload_for_wandb = {'key': f"val/detailed_sequence{label_suffix}", 'images': wandb_images_to_log}
-            
-        return current_image_logs, detailed_payload_for_wandb
+            detailed_log_payload_for_wandb = {'key': f"val/detailed_sequence{label_suffix}", 'images': wandb_images_to_log}
+    
+        print(f"[DEBUG run_sampling] Returning detailed_log_payload_for_wandb: {detailed_log_payload_for_wandb is not None}") # DEBUG
+        return current_image_logs, detailed_log_payload_for_wandb
 
     image_logs = []
     all_detailed_wandb_payloads = []
@@ -298,6 +302,7 @@ def log_validation(accelerator, config, model, logger, step, device, vae=None, i
         image_logs.extend(current_logs_run1)
     if detailed_payload_run1:
         all_detailed_wandb_payloads.append(detailed_payload_run1)
+    print(f"[DEBUG log_validation] After run1, all_detailed_wandb_payloads has {len(all_detailed_wandb_payloads)} items.") # DEBUG
 
     # Run with init_noise if provided
     if init_noise is not None:
@@ -307,6 +312,7 @@ def log_validation(accelerator, config, model, logger, step, device, vae=None, i
             image_logs.extend(current_logs_run2)
         if detailed_payload_run2:
             all_detailed_wandb_payloads.append(detailed_payload_run2)
+        print(f"[DEBUG log_validation] After run2, all_detailed_wandb_payloads has {len(all_detailed_wandb_payloads)} items.") # DEBUG
 
     formatted_images = []
     for log in image_logs:
@@ -329,9 +335,13 @@ def log_validation(accelerator, config, model, logger, step, device, vae=None, i
                 tracker.log({"validation": wandb_images_for_main_log}, step=step) # Added step for consistency
 
             # Log the new detailed sequences using direct tracker.log
-            for payload in all_detailed_wandb_payloads:
-                if payload['images']: # Ensure there are images in this payload
+            print(f"[DEBUG log_validation] Attempting to log detailed sequences. Found {len(all_detailed_wandb_payloads)} payloads.") # DEBUG
+            for i, payload in enumerate(all_detailed_wandb_payloads):
+                if payload and payload.get('images'): # Ensure payload exists and has images
+                    print(f"[DEBUG log_validation] Logging detailed payload {i+1}: key='{payload['key']}', num_images={len(payload['images'])}") # DEBUG
                     tracker.log({payload['key']: payload['images']}, step=step)
+                else:
+                    print(f"[DEBUG log_validation] Skipping detailed payload {i+1} due to missing images or empty payload.") # DEBUG
         else:
             logger.warn(f"image logging not implemented for {tracker.name}")
 
