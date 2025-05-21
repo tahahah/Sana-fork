@@ -220,7 +220,7 @@ class PacmanDataset(IterableDataset):
         return {
             'obs': noisy_obs,  # [(seq_len-1)*C, H, W] with noise
             'img': frames[-C:, :, :],   # [C, H, W] 
-            'y': actions[:, :-1, :],  # [1, seq_len-1, 5]
+            'y': actions[:, 1:, :],  # [1, seq_len-1, 5], offset by -1
             'y_mask': torch.ones(1, actions.shape[1] - 1),  # [1, seq_len-1]
             'data_info': {
                 'episode': sequence[-1].get('episode', 0),
