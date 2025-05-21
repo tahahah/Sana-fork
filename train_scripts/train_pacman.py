@@ -36,6 +36,7 @@ from accelerate import Accelerator, InitProcessGroupKwargs
 from accelerate.utils import DistributedType
 from PIL import Image
 from termcolor import colored
+import wandb # For detailed image logging
 
 warnings.filterwarnings("ignore")  # ignore warning
 
@@ -72,7 +73,10 @@ def log_validation(accelerator, config, model, logger, step, device, vae=None, i
     
     # Initialize validation dataset and dataloader if not already done
     if val_dataset is None:
-        val_dataset = build_dataset(asdict(config.data), resolution=image_size, aspect_ratio_type=config.model.aspect_ratio_type, vae_downsample_rate=config.vae.vae_downsample_rate, vae=vae)
+        dataset_config_dict = asdict(config.data)
+        dataset_config_dict['is_validation_run'] = True
+        current_image_size = getattr(config.model, 'image_size', 512) # Default to 512 if not found
+        val_dataset = build_dataset(dataset_config_dict, resolution=current_image_size, aspect_ratio_type=config.model.aspect_ratio_type, vae_downsample_rate=config.vae.vae_downsample_rate, vae=vae)
         val_dataloader = torch.utils.data.DataLoader(
             val_dataset,
             batch_size=config.train.train_batch_size,
@@ -229,8 +233,52 @@ def log_validation(accelerator, config, model, logger, step, device, vae=None, i
                 .numpy()[0]
             )
             print(f"Debug - samples shape: {samples.shape}")
-            image = Image.fromarray(samples)
-            
+            image = Image.fromarray(samples) # This is the predicted PIL image
+
+            # --- Detailed WandB Logging --- 
+            if accelerator.is_main_process and idx == 0: # Log for the first item in batch only, for now
+                val_dataset_instance = val_dataloader.dataset
+                raw_data = val_dataset_instance.get_last_raw_validation_data()
+
+                if raw_data and raw_data['raw_frames']:
+                    ACTION_ID_TO_STRING = {0: "Left", 1: "Right", 2: "Up", 3: "Down", 4: "No Action"}
+                    wandb_images_to_log = []
+                    
+                    num_total_raw_frames = len(raw_data['raw_frames'])
+                    # Log up to 4 context frames + 1 target frame. raw_frames = [context..., target]
+                    # sequence_length from config is model's view (e.g., 5 = 4 context + 1 target)
+                    # We want to show the N context frames that led to the target.
+                    # The raw_data['raw_frames'] should correspond to the sequence_length items.
+                    
+                    # Determine how many context frames to log from the available raw_data
+                    # raw_data['raw_frames'] are [c0, c1, ..., cN-1, target]
+                    # We want to log raw_frames[cN-1-num_log_context_frames : cN-1]
+                    num_context_to_display = min(4, num_total_raw_frames - 1)
+                    
+                    context_frames_start_idx = (num_total_raw_frames - 1) - num_context_to_display
+
+                    for i in range(context_frames_start_idx, num_total_raw_frames - 1): # Iterate over context frames
+                        if i < 0: continue # Should not happen with proper calculation
+                        pil_img = raw_data['raw_frames'][i]
+                        action_idx = raw_data['raw_actions'][i]
+                        action_str = ACTION_ID_TO_STRING.get(action_idx, "Unknown")
+                        
+                        display_frame_num = i - context_frames_start_idx + 1
+                        caption = f"Context {display_frame_num} (Action: {action_str})"
+                        wandb_images_to_log.append(wandb.Image(pil_img, caption=caption))
+
+                    # Log Target Frame (Raw)
+                    if num_total_raw_frames > 0:
+                        target_pil_img = raw_data['raw_frames'][-1]
+                        wandb_images_to_log.append(wandb.Image(target_pil_img, caption="Target Frame (Raw)"))
+
+                    # Log Predicted Frame (already 'image' variable)
+                    wandb_images_to_log.append(wandb.Image(image, caption=f"Predicted Frame{label_suffix}"))
+
+                    if wandb_images_to_log:
+                        accelerator.log({f"val/detailed_sequence{label_suffix}": wandb_images_to_log}, step=step)
+            # --- End Detailed WandB Logging ---
+
             # Convert actions to readable format for logging
             action_names = ['LEFT', 'RIGHT', 'UP', 'DOWN', 'NO_ACTION']
             action_seq = []

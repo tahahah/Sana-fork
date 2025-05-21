@@ -85,7 +85,8 @@ class PacmanDataset(IterableDataset):
         buffer_size=1000,  # Size of the sample buffer for batching
         prefetch_factor=2,  # Number of batches to prefetch
         config=None,
-        vae=None,  
+        vae=None,
+        is_validation_run=False,  # Added for detailed validation logging
         **kwargs,
     ):
         self.logger = get_root_logger() # if config is None else get_root_logger(osp.join(config.work_dir, "train_log.log"))
@@ -102,6 +103,9 @@ class PacmanDataset(IterableDataset):
         self.mixed_precision = "fp32"
         if config is not None and hasattr(config, 'model') and hasattr(config.model, 'mixed_precision'):
             self.mixed_precision = config.model.mixed_precision
+
+        self.is_validation_run = is_validation_run
+        self.last_raw_validation_data = None  # For storing raw data for validation logging
         
         # Create blank image for padding
         self.blank_image = Image.new('RGB', (self.resolution, self.resolution), 'black')
@@ -180,6 +184,21 @@ class PacmanDataset(IterableDataset):
             
     def _process_sequence(self, sequence):
         """Process a sequence of samples into the required format."""
+        # Determine the segment of the sequence that will be processed for model input
+        if len(sequence) >= self.sequence_length:
+            # This is the segment that will form the basis of model inputs/targets
+            actual_data_segment = sequence[-self.sequence_length:]
+        else:
+            # If sequence is shorter than sequence_length, it will be padded later.
+            # For raw logging, we use the actual data present before padding.
+            actual_data_segment = sequence
+
+        if self.is_validation_run and actual_data_segment: # Ensure not empty
+            # Store raw PIL images and integer actions from the actual_data_segment
+            raw_pil_images = [b['frame_image'] for b in actual_data_segment]
+            raw_actions = [b['action'] for b in actual_data_segment]
+            self.last_raw_validation_data = {'raw_frames': raw_pil_images, 'raw_actions': raw_actions}
+
         if len(sequence) < self.sequence_length:
             # Pad with blanks at the start
             padding_length = self.sequence_length - len(sequence)
@@ -364,6 +383,12 @@ class PacmanDataset(IterableDataset):
     
     def __len__(self):
         return self.dataset.info.splits['train'].num_examples
+
+    def get_last_raw_validation_data(self):
+        """Retrieves the last stored raw data for validation logging and clears it."""
+        data = self.last_raw_validation_data
+        self.last_raw_validation_data = None  # Clear after retrieval
+        return data
 
 @DATASETS.register_module()
 class PacmanDatasetMS(PacmanDataset):
