@@ -48,8 +48,8 @@ h1 {
     flex-wrap: wrap; /* Allow wrapping */
     justify-content: center; /* Center items if they don't fill the row */
     padding: 15px;
-    border: 1px solid #ddd;
-    background-color: #fff;
+    border: 2px solid #ccc; /* More prominent border */
+    background-color: #f9f9f9; /* Subtle background color */
     min-height: 200px; /* Ensure it's visible even when empty */
 }
 
@@ -82,4 +82,13 @@ h1 {
     min-width: 80px; /* Give it some width */
     font-weight: bold;
     color: #555; /* Default color, JS will override */
+}
+
+/* 6. Info Area for help text/error messages */
+.info-area {
+    margin-top: 15px;
+    padding: 10px;
+    background-color: #eef;
+    border: 1px solid #cce;
+    font-size: 0.9em;
 }

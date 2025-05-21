@@ -12,7 +12,7 @@ import logging
 
 # Constants
 UI_ACTION_LABELS = {0: "LEFT", 1: "RIGHT", 2: "UP", 3: "DOWN", 4: "NO_ACTION"}
-TEMP_FRAME_DIR = "visualizer_app/static/temp_frames"
+# TEMP_FRAME_DIR global constant is removed. Will use an instance variable with absolute path.
 
 # Helper functions (convert_to_rgb, make_square, rotate_90_clockwise) are removed 
 # as they are now encapsulated within pacman_dataset_copy.py.
@@ -37,11 +37,15 @@ class VisualizationDataLoader:
         self.logger = logging.getLogger(__name__)
         logging.basicConfig(level=logging.INFO) # Ensures logger output is visible
         
-        # Ensure TEMP_FRAME_DIR exists and is empty
-        if os.path.exists(TEMP_FRAME_DIR):
-            shutil.rmtree(TEMP_FRAME_DIR)
-        os.makedirs(TEMP_FRAME_DIR, exist_ok=True)
-        self.logger.info(f"Temporary frame directory created at {TEMP_FRAME_DIR}")
+        # Define SCRIPT_DIR and absolute path for temp_frames
+        SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+        self.temp_frame_dir_absolute = os.path.join(SCRIPT_DIR, "static", "temp_frames")
+        
+        # Ensure self.temp_frame_dir_absolute exists and is empty
+        if os.path.exists(self.temp_frame_dir_absolute):
+            shutil.rmtree(self.temp_frame_dir_absolute)
+        os.makedirs(self.temp_frame_dir_absolute, exist_ok=True)
+        self.logger.info(f"Temporary frame directory created at {self.temp_frame_dir_absolute}")
 
     # _fetch_raw_sequence method removed
 
@@ -59,11 +63,14 @@ class VisualizationDataLoader:
             except StopIteration:
                 self.logger.error("Dataset empty even after reset. Returning empty data.")
                 return [] # Should not happen with a streaming dataset that can be reset
-
-        # Extract data from processed_sequence (referencing PacmanDataset structure)
-        obs_tensor = processed_sequence['obs']  # Shape: [(L-1)*C, H, W]
-        actions_tensor = processed_sequence['y'] # Shape: [1, L-1, NumActions]
         
+        print(f"[DATA_LOADER] Fetched processed_sequence. Keys: {processed_sequence.keys()}")
+        obs_tensor = processed_sequence['obs']
+        actions_tensor = processed_sequence['y']
+        print(f"[DATA_LOADER] obs_tensor shape: {obs_tensor.shape}, dtype: {obs_tensor.dtype}")
+        print(f"[DATA_LOADER] actions_tensor shape: {actions_tensor.shape}, dtype: {actions_tensor.dtype}")
+        # print(f"[DATA_LOADER] Sample of actions_tensor (first 5 one-hot): {actions_tensor[:, :5, :]}")
+
         # Assuming C=3 (RGB). PacmanDataset's transform output is 3 channels.
         C = 3 
         # L is self.pacman_sequence_length. 'obs' has L-1 frames.
@@ -80,16 +87,20 @@ class VisualizationDataLoader:
         
         processed_frames_output = []
         
-        # Ensure TEMP_FRAME_DIR is clean before saving new frames
-        if os.path.exists(TEMP_FRAME_DIR):
-            shutil.rmtree(TEMP_FRAME_DIR)
-        os.makedirs(TEMP_FRAME_DIR, exist_ok=True)
+        # Ensure self.temp_frame_dir_absolute is clean before saving new frames.
+        # This is typically done in __init__. If multiple calls to get_visualization_data
+        # are expected on the same instance without re-initialization, uncommenting this is safer.
+        # if os.path.exists(self.temp_frame_dir_absolute):
+        #     shutil.rmtree(self.temp_frame_dir_absolute)
+        # os.makedirs(self.temp_frame_dir_absolute, exist_ok=True)
 
         # Process Actions:
         # actions_tensor shape: [1, L-1, NumActions_OneHot] e.g. [1, 63, 5]
         # We need to convert one-hot to class indices.
         action_indices = torch.argmax(actions_tensor.squeeze(0), dim=1).cpu().numpy() # Shape [L-1]
+        print(f"[DATA_LOADER] Calculated action_indices: {action_indices}")
         action_labels_for_sequence = [UI_ACTION_LABELS.get(idx, "UNKNOWN") for idx in action_indices]
+        print(f"[DATA_LOADER] Generated action_labels_for_sequence: {action_labels_for_sequence}")
 
         # Loop for frames and actions
         for j in range(num_frames_in_sequence):
@@ -99,10 +110,16 @@ class VisualizationDataLoader:
             frame_pil = T.ToPILImage()(frame_tensor_chw.cpu().float()) 
             
             frame_filename = f"frame_{j:03d}.png"
-            frame_path = os.path.join(TEMP_FRAME_DIR, frame_filename)
+            # Use self.temp_frame_dir_absolute for saving the file path
+            frame_path = os.path.join(self.temp_frame_dir_absolute, frame_filename)
             frame_pil.save(frame_path)
             
+            # image_url remains relative for the frontend
             image_url = f"/static/temp_frames/{frame_filename}"
+
+            if j == 0:
+                print(f"[DATA_LOADER] First frame_url generated: {image_url}")
+                print(f"[DATA_LOADER] First frame_tensor_chw shape: {frame_tensor_chw.shape}")
             
             # Assemble output for this frame
             # 'actions' will be the full list of L-1 actions for this entire sequence.
@@ -112,5 +129,10 @@ class VisualizationDataLoader:
                 'actions': action_labels_for_sequence, 
                 'original_frame_index_in_raw': j 
             })
+        
+        # print(f"[DATA_LOADER] processed_frames_output (first item): {processed_frames_output[0] if processed_frames_output else 'Empty'}")
+        print(f"[DATA_LOADER] Length of processed_frames_output: {len(processed_frames_output)}")
+        if processed_frames_output:
+            print(f"[DATA_LOADER] First item of processed_frames_output: {{'frame_url': '{processed_frames_output[0]['frame_url']}', 'actions_length': len(processed_frames_output[0]['actions']), 'original_frame_index_in_raw': {processed_frames_output[0]['original_frame_index_in_raw']}}}")
             
         return processed_frames_output

@@ -2,6 +2,7 @@
 # It will contain the API endpoints and logic for the visualizer.
 
 import uvicorn
+import os # Added import os
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -10,11 +11,17 @@ from fastapi.templating import Jinja2Templates
 # Corrected relative import assuming main.py is in visualizer_app and data_loader.py is in the same directory
 from .data_loader import VisualizationDataLoader 
 
+# Define absolute paths for static and templates directories
+MAIN_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+STATIC_DIR_ABSOLUTE = os.path.join(MAIN_SCRIPT_DIR, "static")
+TEMPLATES_DIR_ABSOLUTE = os.path.join(MAIN_SCRIPT_DIR, "templates")
+
 app = FastAPI()
 
-# Assuming running from project root, so paths are relative to the root.
-templates = Jinja2Templates(directory="visualizer_app/templates")
-app.mount("/static", StaticFiles(directory="visualizer_app/static"), name="static")
+# Mount static files using absolute path
+app.mount("/static", StaticFiles(directory=STATIC_DIR_ABSOLUTE), name="static")
+# Initialize Jinja2Templates using absolute path
+templates = Jinja2Templates(directory=TEMPLATES_DIR_ABSOLUTE)
 
 @app.get("/", response_class=HTMLResponse)
 async def read_root(request: Request):
@@ -34,6 +41,12 @@ async def get_sequence_data(
         )
         # get_visualization_data now takes no parameters
         viz_data = loader.get_visualization_data() 
+        
+        print(f"[MAIN_API] Data from loader (length): {len(viz_data)}")
+        if viz_data:
+            # print(f"[MAIN_API] First item from loader: {viz_data[0]}")
+            print(f"[MAIN_API] First item from loader: {{'frame_url': '{viz_data[0]['frame_url']}', 'actions_length': len(viz_data[0]['actions']), 'original_frame_index_in_raw': {viz_data[0]['original_frame_index_in_raw']}}}")
+
         return {"sequence_data": viz_data}
     except Exception as e:
         # Basic error handling for now

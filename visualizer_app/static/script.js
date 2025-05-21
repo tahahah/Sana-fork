@@ -9,6 +9,7 @@ const staggerOffsetInput = document.getElementById('staggerOffset');
 const visualizationContainer = document.getElementById('visualizationContainer');
 
 function updateActionDisplay() {
+    console.log('[SCRIPT_JS] updateActionDisplay called. Current offset:', staggerOffsetInput.value);
     const offset = parseInt(staggerOffsetInput.value) || 0;
     const frameElements = visualizationContainer.children;
 
@@ -31,6 +32,25 @@ function updateActionDisplay() {
             actionText = actions[action_idx_to_display];
         }
 
+        // Debugging for the first frame element
+        if (i === 0 && frameDiv.dataset) {
+            console.log('[SCRIPT_JS] Updating first frame. Stored originalFrameIndexInRaw:', frameDiv.dataset.originalFrameIndexInRaw);
+            let actions_for_log;
+            try {
+                actions_for_log = JSON.parse(frameDiv.dataset.actions); // This is 'actions' variable from above
+            } catch(e) {
+                actions_for_log = "Error parsing actions";
+            }
+            // Check if actions_for_log is an array before slicing
+            const actionsSample = Array.isArray(actions_for_log) ? actions_for_log.slice(0,5).join(", ") + "..." : actions_for_log;
+            console.log('[SCRIPT_JS] Updating first frame. Stored actions (sample):', actionsSample);
+            
+            console.log('[SCRIPT_JS] For first frame: baseOriginalFrameIndex:', baseOriginalFrameIndex, 'offset:', offset, 'action_idx_to_display:', action_idx_to_display);
+            
+            // actionText is already calculated above, use it directly
+            console.log('[SCRIPT_JS] For first frame: resulting actionText:', actionText);
+        }
+
         const actionLabel = frameDiv.querySelector('p.action-label');
         if (actionLabel) {
             actionLabel.textContent = actionText;
@@ -40,6 +60,7 @@ function updateActionDisplay() {
 }
 
 function renderSequence(sequence) {
+    console.log('[SCRIPT_JS] renderSequence called with sequence length:', sequence ? sequence.length : 0);
     currentRawData = sequence; // Store the raw data
     visualizationContainer.innerHTML = ''; // Clear previous content
 
@@ -49,6 +70,11 @@ function renderSequence(sequence) {
     }
 
     currentRawData.forEach((item, index) => {
+        if (index === 0) {
+            console.log('[SCRIPT_JS] Processing first item in renderSequence:', JSON.parse(JSON.stringify(item)));
+            console.log('[SCRIPT_JS] First item frame_url for img src:', item.frame_url);
+        }
+
         const frameDiv = document.createElement('div');
         frameDiv.classList.add('frame-item');
         
@@ -97,14 +123,22 @@ async function fetchAndDisplaySequence() {
             throw new Error(`HTTP error! status: ${response.status}`);
         }
         const jsonData = await response.json();
-        if (jsonData.error) {
-            throw new Error(`Backend error: ${jsonData.error}`);
-        }
-        if (jsonData.sequence_data) {
-            renderSequence(jsonData.sequence_data);
+
+        // Debugging logs for received data
+        console.log('[SCRIPT_JS] Received data from backend (raw jsonData):', JSON.parse(JSON.stringify(jsonData))); 
+        if (jsonData && jsonData.sequence_data) {
+            console.log('[SCRIPT_JS] sequence_data length:', jsonData.sequence_data.length);
+            if (jsonData.sequence_data.length > 0) {
+                console.log('[SCRIPT_JS] First item of sequence_data:', JSON.parse(JSON.stringify(jsonData.sequence_data[0])));
+            }
+            renderSequence(jsonData.sequence_data); // Call renderSequence if data is valid
         } else {
-            console.error("No sequence_data found in response:", jsonData);
-            visualizationContainer.innerHTML = '<p>Error: No sequence data received.</p>';
+            console.error('[SCRIPT_JS] jsonData.sequence_data is missing or undefined', jsonData);
+            // Also handle error if jsonData.error is present (as it was before)
+            if (jsonData.error) {
+                 throw new Error(`Backend error: ${jsonData.error}`);
+            }
+            visualizationContainer.innerHTML = '<p>Error: No sequence data received or data is malformed.</p>';
         }
     } catch (error) {
         console.error('Error fetching or processing sequence data:', error);
