@@ -42,9 +42,8 @@ warnings.filterwarnings("ignore")  # ignore warning
 
 
 from diffusion import DPMS, FlowEuler, Scheduler
-from diffusion.data.builder import build_dataset, build_dataloader
-from diffusion.data.datasets.utils import random_sample_from_iterable
-from diffusion.data.datasets.pacman_data import pacman_collate_fn
+from diffusion.data.builder import build_dataloader, build_dataset
+from diffusion.data.wids import DistributedRangedSampler
 from diffusion.model.builder import build_model, get_vae, vae_decode, vae_encode
 from diffusion.model.respace import compute_density_for_timestep_sampling
 from diffusion.utils.checkpoint import load_checkpoint, save_checkpoint
@@ -76,6 +75,7 @@ def log_validation(accelerator, config, model, logger, step, device, vae=None, i
     if val_dataset is None:
         dataset_config_dict = asdict(config.data)
         dataset_config_dict['is_validation_run'] = True
+        logger.info(f"[DEBUG log_validation] Set is_validation_run to {dataset_config_dict['is_validation_run']} in dataset_config_dict for val_dataset.")
         current_image_size = getattr(config.model, 'image_size', 512) # Default to 512 if not found
         val_dataset = build_dataset(dataset_config_dict, resolution=current_image_size, aspect_ratio_type=config.model.aspect_ratio_type, vae_downsample_rate=config.vae.vae_downsample_rate, vae=vae)
         val_dataloader = torch.utils.data.DataLoader(
@@ -83,8 +83,7 @@ def log_validation(accelerator, config, model, logger, step, device, vae=None, i
             batch_size=config.train.train_batch_size,
             shuffle=False,
             num_workers=config.train.num_workers,
-            pin_memory=True,
-            collate_fn=pacman_collate_fn
+            pin_memory=True
         )
         val_iterator = iter(val_dataloader)
     
@@ -237,101 +236,79 @@ def log_validation(accelerator, config, model, logger, step, device, vae=None, i
             print(f"Debug - samples shape: {samples.shape}")
             image = Image.fromarray(samples) # This is the predicted PIL image
 
-            # --- Detailed WandB Logging Preparation (for idx == 0) ---
-            if accelerator.is_main_process and idx == 0: # Prepare detailed log only for the first item in the batch
-                wandb_images_to_log = [] # Initialize here to ensure it's defined for this scope
-            
-                # Access raw data from the batch item itself
-                raw_data = None
-                if 'raw_validation_payload' in batch and batch['raw_validation_payload'] is not None:
-                    # Assuming batch['raw_validation_payload'] is a list of payloads if batch_size > 1
-                    # and we are interested in the payload for the current idx (which is 0 here)
-                    # Or, if it's already the specific payload for this item (e.g. if not collated into a list by dataloader)
-                    # For simplicity, let's assume direct access or that it's the first item's payload.
-                    # If batch['raw_validation_payload'] is a list of dicts for the batch:
-                    if isinstance(batch['raw_validation_payload'], list) and len(batch['raw_validation_payload']) > idx:
-                        raw_data = batch['raw_validation_payload'][idx]
-                    elif isinstance(batch['raw_validation_payload'], dict): # If it's already the dict for the first item
-                        raw_data = batch['raw_validation_payload']
-            
-                if raw_data and raw_data.get('raw_frames'):
+            # --- Detailed WandB Logging --- 
+            if accelerator.is_main_process and idx == 0: # Log for the first item in batch only, for now
+                logger.info(f"[DEBUG run_sampling] Entered detailed logging block. accelerator.is_main_process: {accelerator.is_main_process}, idx: {idx}")
+                val_dataset_instance = val_dataloader.dataset
+                raw_data = val_dataset_instance.get_last_raw_validation_data()
+                logger.info(f"[DEBUG run_sampling] raw_data from get_last_raw_validation_data(): {'Not None' if raw_data else 'None'}")
+
+                if raw_data and raw_data['raw_frames']:
+                    logger.info(f"[DEBUG run_sampling] raw_data contains raw_frames. Num raw_frames: {len(raw_data['raw_frames'])}")
                     ACTION_ID_TO_STRING = {0: "Left", 1: "Right", 2: "Up", 3: "Down", 4: "No Action"}
-                    # wandb_images_to_log is already initialized as []
+                    wandb_images_to_log = []
                     
                     num_total_raw_frames = len(raw_data['raw_frames'])
+                    # Log up to 4 context frames + 1 target frame. raw_frames = [context..., target]
+                    # sequence_length from config is model's view (e.g., 5 = 4 context + 1 target)
+                    # We want to show the N context frames that led to the target.
+                    # The raw_data['raw_frames'] should correspond to the sequence_length items.
+                    
+                    # Determine how many context frames to log from the available raw_data
+                    # raw_data['raw_frames'] are [c0, c1, ..., cN-1, target]
+                    # We want to log raw_frames[cN-1-num_log_context_frames : cN-1]
                     num_context_to_display = min(4, num_total_raw_frames - 1)
+                    
                     context_frames_start_idx = (num_total_raw_frames - 1) - num_context_to_display
 
-                    for i_ctx in range(context_frames_start_idx, num_total_raw_frames - 1):
-                        if i_ctx < 0: continue
-                        pil_img = raw_data['raw_frames'][i_ctx]
-                        action_idx_val = raw_data['raw_actions'][i_ctx]
-                        action_str_ctx = ACTION_ID_TO_STRING.get(action_idx_val, "Unknown")
+                    for i in range(context_frames_start_idx, num_total_raw_frames - 1): # Iterate over context frames
+                        if i < 0: continue # Should not happen with proper calculation
+                        pil_img = raw_data['raw_frames'][i]
+                        action_idx = raw_data['raw_actions'][i]
+                        action_str = ACTION_ID_TO_STRING.get(action_idx, "Unknown")
                         
-                        display_frame_num = i_ctx - context_frames_start_idx + 1
-                        caption = f"Context {display_frame_num} (Action: {action_str_ctx})"
+                        display_frame_num = i - context_frames_start_idx + 1
+                        caption = f"Context {display_frame_num} (Action: {action_str})"
                         wandb_images_to_log.append(wandb.Image(pil_img, caption=caption))
 
+                    # Log Target Frame (Raw)
                     if num_total_raw_frames > 0:
                         target_pil_img = raw_data['raw_frames'][-1]
                         wandb_images_to_log.append(wandb.Image(target_pil_img, caption="Target Frame (Raw)"))
 
+                    # Log Predicted Frame (already 'image' variable)
                     wandb_images_to_log.append(wandb.Image(image, caption=f"Predicted Frame{label_suffix}"))
-                    print(f"[DEBUG run_sampling] wandb_images_to_log populated with {len(wandb_images_to_log)} images for detailed log.") # DEBUG
-                else: # DEBUG
-                    # wandb_images_to_log will be empty if this path is taken
-                    print(f"[DEBUG run_sampling] No raw_data or raw_frames found in batch['raw_validation_payload'] for detailed log. wandb_images_to_log is empty ({len(wandb_images_to_log)} images).") # DEBUG
-            # --- End Detailed WandB Logging Preparation ---
 
-            # Original: Convert actions to readable format for logging (for the main 'validation' log)
+                    if wandb_images_to_log:
+                        logger.info(f"[DEBUG run_sampling] wandb_images_to_log is populated. Length: {len(wandb_images_to_log)}. Attempting accelerator.log for 'val/detailed_sequence{label_suffix}'.")
+                        accelerator.log({f"val/detailed_sequence{label_suffix}": wandb_images_to_log}, step=step)
+                        logger.info(f"[DEBUG run_sampling] Called accelerator.log for 'val/detailed_sequence{label_suffix}'.")
+                    else:
+                        logger.info(f"[DEBUG run_sampling] wandb_images_to_log is EMPTY. No detailed sequence will be logged.")
+            # --- End Detailed WandB Logging ---
+
+            # Convert actions to readable format for logging
             action_names = ['LEFT', 'RIGHT', 'UP', 'DOWN', 'NO_ACTION']
             action_seq = []
-            # Corrected loop range for actions: actions is [B, 1, S, A], S = actions.shape[2]
-            for i_act in range(actions.shape[2]): 
-                action_idx_val = actions[idx, 0, i_act].argmax().item()
-                action_seq.append(action_names[action_idx_val])
-            action_str_caption = ' -> '.join(action_seq) # Renamed to avoid conflict
+            for i in range(seq_len):
+                action_idx = actions[idx, 0, 0, 0, i].argmax().item()
+                action_seq.append(action_names[action_idx])
+            action_str = ' -> '.join(action_seq)
             
             current_image_logs.append({
-                "validation_actions": action_str_caption + label_suffix,
+                "validation_actions": action_str + label_suffix,
                 "images": [image]
             })
-        # End of 'for idx, latent in enumerate(latents):' loop
 
-        # Prepare detailed log payload
-        detailed_log_payload_for_wandb = None # Initialize unconditionally after the loop
-
-        if accelerator.is_main_process: 
-            # wandb_images_to_log is only defined if idx == 0 was hit on main process earlier in the loop
-            if 'wandb_images_to_log' in locals() and wandb_images_to_log: 
-                detailed_log_payload_for_wandb = {
-                    'key': f"val/detailed_sequence{label_suffix}", 
-                    'images': wandb_images_to_log
-                }
-            
-        print(f"[DEBUG run_sampling] Returning detailed_log_payload_for_wandb: {detailed_log_payload_for_wandb is not None}") # DEBUG
-        return current_image_logs, detailed_log_payload_for_wandb
-
-    image_logs = []
-    all_detailed_wandb_payloads = []
+        return current_image_logs
 
     # Run with original noise
-    current_logs_run1, detailed_payload_run1 = run_sampling(init_z=None, label_suffix="", vae=vae, sampler=vis_sampler)
-    if current_logs_run1:
-        image_logs.extend(current_logs_run1)
-    if detailed_payload_run1:
-        all_detailed_wandb_payloads.append(detailed_payload_run1)
-    print(f"[DEBUG log_validation] After run1, all_detailed_wandb_payloads has {len(all_detailed_wandb_payloads)} items.") # DEBUG
+    image_logs += run_sampling(init_z=None, label_suffix="", vae=vae, sampler=vis_sampler)
 
     # Run with init_noise if provided
     if init_noise is not None:
         init_noise = torch.clone(init_noise).to(device)
-        current_logs_run2, detailed_payload_run2 = run_sampling(init_z=init_noise, label_suffix=" w/ init noise", vae=vae, sampler=vis_sampler)
-        if current_logs_run2:
-            image_logs.extend(current_logs_run2)
-        if detailed_payload_run2:
-            all_detailed_wandb_payloads.append(detailed_payload_run2)
-        print(f"[DEBUG log_validation] After run2, all_detailed_wandb_payloads has {len(all_detailed_wandb_payloads)} items.") # DEBUG
+        image_logs += run_sampling(init_z=init_noise, label_suffix=" w/ init noise", vae=vae, sampler=vis_sampler)
 
     formatted_images = []
     for log in image_logs:
@@ -347,20 +324,10 @@ def log_validation(accelerator, config, model, logger, step, device, vae=None, i
         elif tracker.name == "wandb":
             import wandb
 
-            wandb_images_for_main_log = []
-            for validation_actions, image_np_array in formatted_images:
-                wandb_images_for_main_log.append(wandb.Image(image_np_array, caption=validation_actions))
-            if wandb_images_for_main_log: # Ensure not empty before logging
-                tracker.log({"validation": wandb_images_for_main_log}, step=step) # Added step for consistency
-
-            # Log the new detailed sequences using direct tracker.log
-            print(f"[DEBUG log_validation] Attempting to log detailed sequences. Found {len(all_detailed_wandb_payloads)} payloads.") # DEBUG
-            for i, payload in enumerate(all_detailed_wandb_payloads):
-                if payload and payload.get('images'): # Ensure payload exists and has images
-                    print(f"[DEBUG log_validation] Logging detailed payload {i+1}: key='{payload['key']}', num_images={len(payload['images'])}") # DEBUG
-                    tracker.log({payload['key']: payload['images']}, step=step)
-                else:
-                    print(f"[DEBUG log_validation] Skipping detailed payload {i+1} due to missing images or empty payload.") # DEBUG
+            wandb_images = []
+            for validation_actions, image in formatted_images:
+                wandb_images.append(wandb.Image(image, caption=validation_actions))
+            tracker.log({"validation": wandb_images})
         else:
             logger.warn(f"image logging not implemented for {tracker.name}")
 
@@ -901,11 +868,11 @@ def main(cfg: SanaConfig) -> None:
             # Standard distributed sampling
             sampler = DistributedRangedSampler(train_dataset, num_replicas=num_replicas, rank=rank)
             train_dataloader = build_dataloader(
-                train_dataset, 
-                batch_size=config.train.train_batch_size, 
-                num_workers=config.train.num_workers, 
-                seed=config.seed,
-                collate_fn=pacman_collate_fn
+                train_dataset,
+                num_workers=config.train.num_workers,
+                batch_size=config.train.train_batch_size,
+                shuffle=False,
+                sampler=sampler,
             )
             train_dataloader_len = len(train_dataloader)
 
