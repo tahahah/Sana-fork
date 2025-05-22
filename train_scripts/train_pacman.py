@@ -237,14 +237,13 @@ def log_validation(accelerator, config, model, logger, step, device, vae=None, i
 
             # --- Detailed WandB Logging Preparation (for idx == 0) ---
             if accelerator.is_main_process and idx == 0: # Prepare detailed log only for the first item in the batch
+                wandb_images_to_log = [] # Initialize here to ensure it's defined for this scope
                 val_dataset_instance = val_dataloader.dataset
                 raw_data = val_dataset_instance.get_last_raw_validation_data()
 
                 if raw_data and raw_data['raw_frames']:
                     ACTION_ID_TO_STRING = {0: "Left", 1: "Right", 2: "Up", 3: "Down", 4: "No Action"}
-                    # Initialize wandb_images_to_log here, specific to this idx == 0 block
-                    # This ensures it's defined before being used by detailed_log_payload_for_wandb
-                    wandb_images_to_log = [] 
+                    # wandb_images_to_log is already initialized as []
                     
                     num_total_raw_frames = len(raw_data['raw_frames'])
                     num_context_to_display = min(4, num_total_raw_frames - 1)
@@ -265,10 +264,11 @@ def log_validation(accelerator, config, model, logger, step, device, vae=None, i
                         wandb_images_to_log.append(wandb.Image(target_pil_img, caption="Target Frame (Raw)"))
 
                     wandb_images_to_log.append(wandb.Image(image, caption=f"Predicted Frame{label_suffix}"))
-                print(f"[DEBUG run_sampling] wandb_images_to_log populated with {len(wandb_images_to_log)} images for detailed log.") # DEBUG
-            else: # DEBUG
-                print(f"[DEBUG run_sampling] No raw_data or raw_frames found for detailed log.") # DEBUG
-        # --- End Detailed WandB Logging Preparation ---
+                    print(f"[DEBUG run_sampling] wandb_images_to_log populated with {len(wandb_images_to_log)} images for detailed log.") # DEBUG
+                else: # DEBUG
+                    # wandb_images_to_log will be empty if this path is taken
+                    print(f"[DEBUG run_sampling] No raw_data or raw_frames found for detailed log. wandb_images_to_log is empty ({len(wandb_images_to_log)} images).") # DEBUG
+            # --- End Detailed WandB Logging Preparation ---
 
             # Original: Convert actions to readable format for logging (for the main 'validation' log)
             action_names = ['LEFT', 'RIGHT', 'UP', 'DOWN', 'NO_ACTION']
