@@ -42,8 +42,9 @@ warnings.filterwarnings("ignore")  # ignore warning
 
 
 from diffusion import DPMS, FlowEuler, Scheduler
-from diffusion.data.builder import build_dataloader, build_dataset
-from diffusion.data.wids import DistributedRangedSampler
+from diffusion.data.builder import build_dataset, build_dataloader
+from diffusion.data.datasets.utils import random_sample_from_iterable
+from diffusion.data.datasets.pacman_data import pacman_collate_fn
 from diffusion.model.builder import build_model, get_vae, vae_decode, vae_encode
 from diffusion.model.respace import compute_density_for_timestep_sampling
 from diffusion.utils.checkpoint import load_checkpoint, save_checkpoint
@@ -82,7 +83,8 @@ def log_validation(accelerator, config, model, logger, step, device, vae=None, i
             batch_size=config.train.train_batch_size,
             shuffle=False,
             num_workers=config.train.num_workers,
-            pin_memory=True
+            pin_memory=True,
+            collate_fn=pacman_collate_fn
         )
         val_iterator = iter(val_dataloader)
     
@@ -899,11 +901,11 @@ def main(cfg: SanaConfig) -> None:
             # Standard distributed sampling
             sampler = DistributedRangedSampler(train_dataset, num_replicas=num_replicas, rank=rank)
             train_dataloader = build_dataloader(
-                train_dataset,
-                num_workers=config.train.num_workers,
-                batch_size=config.train.train_batch_size,
-                shuffle=False,
-                sampler=sampler,
+                train_dataset, 
+                batch_size=config.train.train_batch_size, 
+                num_workers=config.train.num_workers, 
+                seed=config.seed,
+                collate_fn=pacman_collate_fn
             )
             train_dataloader_len = len(train_dataloader)
 

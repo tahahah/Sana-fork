@@ -13,10 +13,28 @@ import queue
 import traceback
 import logging
 from typing import Optional
+from torch.utils.data.dataloader import default_collate
 
 from diffusion.data.datasets.utils import ASPECT_RATIO_512_TEST, ASPECT_RATIO_1024_TEST, ASPECT_RATIO_2048_TEST
 from diffusion.data.builder import DATASETS
 from diffusion.utils.logger import get_root_logger
+
+def pacman_collate_fn(batch):
+    """
+    Custom collate function for PacmanDataset.
+    Handles 'raw_validation_payload' separately, passing it through as a list of items.
+    The rest of the batch items are collated using default_collate.
+    """
+    # Separate raw_validation_payload from each item in the batch
+    raw_payloads = [item.pop('raw_validation_payload', None) for item in batch]
+
+    # Collate the rest of the batch (which are now standard tensor/data types)
+    collated_batch = default_collate(batch)
+
+    # Add the (uncollated) list of raw_payloads back to the collated batch
+    collated_batch['raw_validation_payload'] = raw_payloads
+    
+    return collated_batch
 
 def make_square(image):
     # Calculate the necessary padding to make the image square
