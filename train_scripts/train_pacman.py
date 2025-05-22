@@ -238,10 +238,21 @@ def log_validation(accelerator, config, model, logger, step, device, vae=None, i
             # --- Detailed WandB Logging Preparation (for idx == 0) ---
             if accelerator.is_main_process and idx == 0: # Prepare detailed log only for the first item in the batch
                 wandb_images_to_log = [] # Initialize here to ensure it's defined for this scope
-                val_dataset_instance = val_dataloader.dataset
-                raw_data = val_dataset_instance.get_last_raw_validation_data()
-
-                if raw_data and raw_data['raw_frames']:
+            
+                # Access raw data from the batch item itself
+                raw_data = None
+                if 'raw_validation_payload' in batch and batch['raw_validation_payload'] is not None:
+                    # Assuming batch['raw_validation_payload'] is a list of payloads if batch_size > 1
+                    # and we are interested in the payload for the current idx (which is 0 here)
+                    # Or, if it's already the specific payload for this item (e.g. if not collated into a list by dataloader)
+                    # For simplicity, let's assume direct access or that it's the first item's payload.
+                    # If batch['raw_validation_payload'] is a list of dicts for the batch:
+                    if isinstance(batch['raw_validation_payload'], list) and len(batch['raw_validation_payload']) > idx:
+                        raw_data = batch['raw_validation_payload'][idx]
+                    elif isinstance(batch['raw_validation_payload'], dict): # If it's already the dict for the first item
+                        raw_data = batch['raw_validation_payload']
+            
+                if raw_data and raw_data.get('raw_frames'):
                     ACTION_ID_TO_STRING = {0: "Left", 1: "Right", 2: "Up", 3: "Down", 4: "No Action"}
                     # wandb_images_to_log is already initialized as []
                     
@@ -267,7 +278,7 @@ def log_validation(accelerator, config, model, logger, step, device, vae=None, i
                     print(f"[DEBUG run_sampling] wandb_images_to_log populated with {len(wandb_images_to_log)} images for detailed log.") # DEBUG
                 else: # DEBUG
                     # wandb_images_to_log will be empty if this path is taken
-                    print(f"[DEBUG run_sampling] No raw_data or raw_frames found for detailed log. wandb_images_to_log is empty ({len(wandb_images_to_log)} images).") # DEBUG
+                    print(f"[DEBUG run_sampling] No raw_data or raw_frames found in batch['raw_validation_payload'] for detailed log. wandb_images_to_log is empty ({len(wandb_images_to_log)} images).") # DEBUG
             # --- End Detailed WandB Logging Preparation ---
 
             # Original: Convert actions to readable format for logging (for the main 'validation' log)
@@ -285,11 +296,17 @@ def log_validation(accelerator, config, model, logger, step, device, vae=None, i
             })
         # End of 'for idx, latent in enumerate(latents):' loop
 
-        # Prepare detailed log payload (will be None if not idx==0 or not main_process)
-        detailed_payload_for_wandb = None
-        if accelerator.is_main_process and 'wandb_images_to_log' in locals() and wandb_images_to_log:
-            detailed_log_payload_for_wandb = {'key': f"val/detailed_sequence{label_suffix}", 'images': wandb_images_to_log}
-    
+        # Prepare detailed log payload
+        detailed_log_payload_for_wandb = None # Initialize unconditionally after the loop
+
+        if accelerator.is_main_process: 
+            # wandb_images_to_log is only defined if idx == 0 was hit on main process earlier in the loop
+            if 'wandb_images_to_log' in locals() and wandb_images_to_log: 
+                detailed_log_payload_for_wandb = {
+                    'key': f"val/detailed_sequence{label_suffix}", 
+                    'images': wandb_images_to_log
+                }
+            
         print(f"[DEBUG run_sampling] Returning detailed_log_payload_for_wandb: {detailed_log_payload_for_wandb is not None}") # DEBUG
         return current_image_logs, detailed_log_payload_for_wandb
 

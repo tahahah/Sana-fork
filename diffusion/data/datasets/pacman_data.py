@@ -105,7 +105,6 @@ class PacmanDataset(IterableDataset):
             self.mixed_precision = config.model.mixed_precision
 
         self.is_validation_run = is_validation_run
-        self.last_raw_validation_data = None  # For storing raw data for validation logging
         
         # Create blank image for padding
         self.blank_image = Image.new('RGB', (self.resolution, self.resolution), 'black')
@@ -193,11 +192,12 @@ class PacmanDataset(IterableDataset):
             # For raw logging, we use the actual data present before padding.
             actual_data_segment = sequence
 
+        raw_validation_payload = None # Initialize to None
         if self.is_validation_run and actual_data_segment: # Ensure not empty
-            # Store raw PIL images and integer actions from the actual_data_segment
+            # Prepare raw PIL images and integer actions from the actual_data_segment
             raw_pil_images = [b['frame_image'] for b in actual_data_segment]
             raw_actions = [b['action'] for b in actual_data_segment]
-            self.last_raw_validation_data = {'raw_frames': raw_pil_images, 'raw_actions': raw_actions}
+            raw_validation_payload = {'raw_frames': raw_pil_images, 'raw_actions': raw_actions}
 
         if len(sequence) < self.sequence_length:
             # Pad with blanks at the start
@@ -244,7 +244,8 @@ class PacmanDataset(IterableDataset):
             'data_info': {
                 'episode': sequence[-1].get('episode', 0),
                 'done': sequence[-1].get('done', False)
-            }
+            },
+            'raw_validation_payload': raw_validation_payload  # Add raw data payload here
         }
 
     def _one_hot_encode(self, action, num_classes=5):
@@ -384,11 +385,6 @@ class PacmanDataset(IterableDataset):
     def __len__(self):
         return self.dataset.info.splits['train'].num_examples
 
-    def get_last_raw_validation_data(self):
-        """Retrieves the last stored raw data for validation logging and clears it."""
-        data = self.last_raw_validation_data
-        self.last_raw_validation_data = None  # Clear after retrieval
-        return data
 
 @DATASETS.register_module()
 class PacmanDatasetMS(PacmanDataset):
