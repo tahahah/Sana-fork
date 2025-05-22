@@ -82,7 +82,7 @@ def log_validation(accelerator, config, model, logger, step, device, vae=None, i
             val_dataset,
             batch_size=config.train.train_batch_size,
             shuffle=False,
-            num_workers=config.train.num_workers,
+            num_workers=0,
             pin_memory=True
         )
         val_iterator = iter(val_dataloader)
