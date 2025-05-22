@@ -126,6 +126,7 @@ def log_validation(accelerator, config, model, logger, step, device, vae=None, i
             vae.cfg.scaling_factor = config.vae.scale_factor
 
     def run_sampling(init_z=None, label_suffix="", vae=None, sampler="dpm-solver"):
+        import wandb # Ensure wandb is available in this scope
         latents = []
         current_image_logs = []
         
