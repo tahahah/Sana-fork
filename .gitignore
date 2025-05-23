@@ -183,3 +183,4 @@ cython_debug/
 
 # windsurf rules
 .windsurfrules
+cache
