@@ -128,9 +128,14 @@ class PacmanDatasetSimple(IterableDataset):
             pil_img = b['frame_image']
             if self.vae is not None and self.load_vae_feat:
                 print(f"[STDERR DEBUG] PacmanDatasetSimple _process_sequence: Using VAE for frame {b_idx}", file=sys.stderr)
-                x = self.transform(pil_img).unsqueeze(0).to(next(self.vae.parameters()).device)
-                z = self.vae.encoder(x).cpu().squeeze(0)  # Shape: [C_channels, H, W]
-                frames_list.append(z)
+                with torch.no_grad():
+                    with torch.amp.autocast(
+                        "cuda",
+                        enabled=(self.mixed_precision == "fp16" or self.mixed_precision == "bf16"),
+                    ):
+                        x = self.transform(pil_img).unsqueeze(0).to(next(self.vae.parameters()).device)
+                        z = self.vae.encoder(x).cpu().squeeze(0)  # Shape: [C_channels, H, W]
+                        frames_list.append(z)
             else:
                 print(f"[STDERR DEBUG] PacmanDatasetSimple _process_sequence: Not using VAE for frame {b_idx}", file=sys.stderr)
                 frames_list.append(self.transform(pil_img))
