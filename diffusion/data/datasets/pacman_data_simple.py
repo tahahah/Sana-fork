@@ -108,15 +108,15 @@ class PacmanDatasetSimple(IterableDataset):
         num_preds = max(L - stagger_offset - 1, 0)
         # Observations
         if num_preds > 0:
-            obs_seq = frames[stagger_offset : stagger_offset + num_preds]  # [num_preds, C, H, W]
+            obs_seq = frames[stagger_offset : stagger_offset + L]  # [num_preds, C, H, W]
             obs = obs_seq.reshape(-1, frames.shape[2], frames.shape[3])  # [(num_preds*C), H, W]
         else:
             obs = torch.empty((0, frames.shape[2], frames.shape[3]))
         # Target image
         img = frames[-1]  # [C, H, W]
         # Target actions and mask
-        y = actions[:, :num_preds, :]  # [1, num_preds, 5]
-        y_mask = torch.ones((1, num_preds), dtype=torch.float32)
+        y = actions[:, :L, :]  # [1, L, 5]
+        y_mask = torch.ones((1, L), dtype=torch.float32)
         # Data info
         data_info = {
             'episode': sequence[-1].get('episode', 0),
