@@ -410,7 +410,7 @@ def run_pacman_inference(config, args):
         # Update action sequence
         # Create one-hot encoded action tensor for the current action
         new_action = torch.zeros(1, 1, 5, dtype=dtype, device=args.device)
-        new_action[0, 0, current_action] = 1.0
+        new_action[0, 0, current_action] = 1
         
         # Shift actions and add new action
         if actions_tensor.shape[1] > 1:
