@@ -1,7 +1,8 @@
 import torch
 import matplotlib.pyplot as plt
 import numpy as np
-from pacman_data_copy import PacmanDataset
+import random
+from pacman_data_simple import PacmanDataset
 from torch.utils.data import DataLoader
 from matplotlib.widgets import Button
 
@@ -32,7 +33,7 @@ def plot_single_processed_sequence(processed_sequence_data, sequence_idx_in_dl_b
     'global_sequence_length' is the PacmanDataset's sequence_length parameter.
     """
     # User's preferred action labels (from Step 118)
-    action_labels = ["RIGHT", "LEFT", "UP", "DOWN", "NO_ACTION"]
+    action_labels = ["LEFT", "RIGHT", "UP", "DOWN", "NO_ACTION"]
 
     # Extract data for this single sequence
     obs_tensor_chw_total = processed_sequence_data['obs']  # Shape: [(L-1)*C, H, W]
@@ -40,7 +41,8 @@ def plot_single_processed_sequence(processed_sequence_data, sequence_idx_in_dl_b
     actions_tensor_1ls = processed_sequence_data['y']      # Shape: [1, L-1, NumActions]
 
     C = 3  # Assuming RGB
-    num_obs_frames = global_sequence_length - 1
+    # num_obs_frames is the number of prediction steps, which is the length of the 'y' sequence.
+    num_obs_frames = actions_tensor_1ls.shape[1] # Shape of y is [1, num_model_predictions, NumActions]
     
     # obs_tensor_chw_total has shape [(num_obs_frames)*C, H, W]
     # Reshape to [num_obs_frames, C, H, W]
@@ -97,6 +99,20 @@ def on_next_batch_click(event):
         print("DataLoader iterator not initialized.")
         return
 
+    # Skip a random number of batches (0 to 5) to get more varied sequences
+    num_to_skip = random.randint(0, 5)
+    if num_to_skip > 0:
+        print(f"Skipping {num_to_skip} batches to get a more random one...")
+        for _ in range(num_to_skip):
+            try:
+                _ = next(dataloader_iterator) # Consume and discard
+            except StopIteration:
+                print("DataLoader exhausted while skipping. Re-initializing iterator.")
+                dataloader_iterator = iter(dataloader_instance)
+                # If exhausted while skipping, we might not be able to skip fully.
+                # We'll just proceed to fetch the next available batch after this loop.
+                break 
+    
     print("Fetching next batch from DataLoader...")
     try:
         # This 'dl_batch' contains 'dataloader_batch_size' number of processed sequences

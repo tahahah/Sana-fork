@@ -115,7 +115,7 @@ def main():
         )
         
         # Number of sequences to visualize
-        num_sequences = 3
+        num_sequences = 10
         # Number of frames per sequence - increase to account for staggering
         frames_per_sequence = 10  # Increased from 8 to allow for staggering
         # Stagger offset
