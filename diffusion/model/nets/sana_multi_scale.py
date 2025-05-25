@@ -433,3 +433,14 @@ def SanaMS_PACMAN_P1_D12(**kwargs):
         num_heads=16,
         **kwargs
     )
+
+@MODELS.register_module()
+def SanaMS_PACMAN_P1_D20(**kwargs):
+    """Factory function for PacmanDiffusionModel following Sana naming convention."""
+    return PacmanDiffusionModel(
+        depth=20,
+        hidden_size=640,
+        patch_size=1,
+        num_heads=20,
+        **kwargs
+    )

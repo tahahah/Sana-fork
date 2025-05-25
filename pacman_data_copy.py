@@ -14,9 +14,9 @@ import traceback
 import logging
 from typing import Optional
 
-from diffusion.data.datasets.utils import ASPECT_RATIO_512_TEST, ASPECT_RATIO_1024_TEST, ASPECT_RATIO_2048_TEST
-from diffusion.data.builder import DATASETS
-from diffusion.utils.logger import get_root_logger
+# from diffusion.data.datasets.utils import ASPECT_RATIO_512_TEST, ASPECT_RATIO_1024_TEST, ASPECT_RATIO_2048_TEST
+# from diffusion.data.builder import DATASETS
+# from diffusion.utils.logger import get_root_logger
 
 def make_square(image):
     # Calculate the necessary padding to make the image square
@@ -72,7 +72,7 @@ class PacmanIterator:
             self.dataset.stop_worker()
             raise StopIteration
 
-@DATASETS.register_module()
+# @DATASETS.register_module()
 class PacmanDataset(IterableDataset):
     def __init__(
         self,
@@ -85,11 +85,10 @@ class PacmanDataset(IterableDataset):
         buffer_size=1000,  # Size of the sample buffer for batching
         prefetch_factor=2,  # Number of batches to prefetch
         config=None,
-        vae=None,
-        is_validation_run=False,  # Added for detailed validation logging
+        vae=None,  
         **kwargs,
     ):
-        self.logger = get_root_logger() # if config is None else get_root_logger(osp.join(config.work_dir, "train_log.log"))
+        self.logger = logging.Logger('lol') # if config is None else get_root_logger(osp.join(config.work_dir, "train_log.log"))
         self.transform = transform if not load_vae_feat else None
         self.load_vae_feat = load_vae_feat
         self.load_text_feat = load_text_feat
@@ -103,10 +102,6 @@ class PacmanDataset(IterableDataset):
         self.mixed_precision = "fp32"
         if config is not None and hasattr(config, 'model') and hasattr(config.model, 'mixed_precision'):
             self.mixed_precision = config.model.mixed_precision
-
-        self.is_validation_run = is_validation_run
-        self.last_raw_validation_data = None  # For storing raw data for validation logging
-        self.logger.info(f"[DEBUG PacmanDataset] Initialized with is_validation_run: {self.is_validation_run}")
         
         # Create blank image for padding
         self.blank_image = Image.new('RGB', (self.resolution, self.resolution), 'black')
@@ -185,22 +180,6 @@ class PacmanDataset(IterableDataset):
             
     def _process_sequence(self, sequence):
         """Process a sequence of samples into the required format."""
-        # Determine the segment of the sequence that will be processed for model input
-        if len(sequence) >= self.sequence_length:
-            # This is the segment that will form the basis of model inputs/targets
-            actual_data_segment = sequence[-self.sequence_length:]
-        else:
-            # If sequence is shorter than sequence_length, it will be padded later.
-            # For raw logging, we use the actual data present before padding.
-            actual_data_segment = sequence
-
-        if self.is_validation_run and actual_data_segment: # Ensure not empty
-            self.logger.info(f"[DEBUG PacmanDataset._process_sequence] is_validation_run is True. Storing raw data. Num frames: {len(actual_data_segment)}")
-            # Store raw PIL images and integer actions from the actual_data_segment
-            raw_pil_images = [b['frame_image'] for b in actual_data_segment]
-            raw_actions = [b['action'] for b in actual_data_segment]
-            self.last_raw_validation_data = {'raw_frames': raw_pil_images, 'raw_actions': raw_actions}
-
         if len(sequence) < self.sequence_length:
             # Pad with blanks at the start
             padding_length = self.sequence_length - len(sequence)
@@ -236,7 +215,7 @@ class PacmanDataset(IterableDataset):
         # Add noise to observation frames
         obs_frames = frames[:-C, :, :]  # Get observation frames
         noise = torch.randn_like(obs_frames)
-        noisy_obs = obs_frames + 0.9 * torch.rand(1).item() * noise  # Additive noise with random scaling
+        noisy_obs = obs_frames #+ 0.9 * torch.rand(1).item() * noise  # Additive noise with random scaling
         
         return {
             'obs': noisy_obs,  # [(seq_len-1)*C, H, W] with noise
@@ -375,7 +354,8 @@ class PacmanDataset(IterableDataset):
                     if self._stop_event.is_set():
                         return
                     self.sequence_buffer.append(sample)
-                    if len(self.sequence_buffer) > 0:
+                    # Only emit sequences once we have a full window (no partial padding)
+                    if len(self.sequence_buffer) >= self.sequence_length:
                         sequence = list(self.sequence_buffer)
                         processed = self._process_sequence(sequence)
                         self.processed_sequences.put(processed)
@@ -386,14 +366,7 @@ class PacmanDataset(IterableDataset):
     def __len__(self):
         return self.dataset.info.splits['train'].num_examples
 
-    def get_last_raw_validation_data(self):
-        """Retrieves the last stored raw data for validation logging and clears it."""
-        self.logger.info(f"[DEBUG PacmanDataset.get_last_raw_validation_data] Called. Data is {'not None' if self.last_raw_validation_data else 'None'}. Clearing it.")
-        data = self.last_raw_validation_data
-        self.last_raw_validation_data = None  # Clear after retrieval
-        return data
-
-@DATASETS.register_module()
+# @DATASETS.register_module()
 class PacmanDatasetMS(PacmanDataset):
     def __init__(self, aspect_ratio_type="ASPECT_RATIO_1024", **kwargs):
         super().__init__(**kwargs)
