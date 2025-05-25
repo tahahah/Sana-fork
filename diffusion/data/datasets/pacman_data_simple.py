@@ -123,8 +123,13 @@ class PacmanDatasetSimple(IterableDataset):
         if self.is_validation_run:
             if self.debug:
                 self.logger.info(f"[DEBUG PacmanDatasetSimple._process_sequence] Validation run. Storing raw data. Num frames in sequence: {len(sequence)}")
-            raw_pil_images = [b['frame_image'] for b in sequence]
-            raw_actions = [b['action'] for b in sequence]
+            
+            # Apply stagger offset to raw validation data to match model input
+            N_obs_y_len = L_config - 1 # This should be consistent with the N_obs_y_len calculated later
+            stagger_offset = 1 # This should be consistent with the stagger_offset calculated later
+
+            raw_pil_images = [b['frame_image'] for b in sequence[stagger_offset : stagger_offset + N_obs_y_len]]
+            raw_actions = [b['action'] for b in sequence[0 : N_obs_y_len]] # Actions are not staggered, they correspond to the obs frames
             self.last_raw_validation_data = {'raw_frames': raw_pil_images, 'raw_actions': raw_actions}
 
         frames_list = []
