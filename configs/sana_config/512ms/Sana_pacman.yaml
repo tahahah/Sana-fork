@@ -11,7 +11,7 @@ data:
   sort_dataset: false
 # model config
 model:
-  model: SanaMS_PACMAN_P1_D20
+  model: SanaMS_PACMAN_P1_D12
   image_size: 512
   in_channels: 3
   mixed_precision: fp16
@@ -22,7 +22,7 @@ model:
   aspect_ratio_type: ASPECT_RATIO_512
   multi_scale: false
   attn_type: linear
-  linear_head_dim: 40
+  linear_head_dim: 32
   ffn_type: glumbconv
   mlp_acts:
     - silu
