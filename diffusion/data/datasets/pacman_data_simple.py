@@ -145,7 +145,6 @@ class PacmanDatasetSimple(IterableDataset):
         print(f"[STDERR DEBUG] PacmanDatasetSimple _process_sequence: frames_tensor shape = {frames_tensor.shape}", file=sys.stderr)
         self.logger.info(f"[PacmanDatasetSimple DEBUG] _process_sequence: Detected C_channels = {C_channels}")
         print(f"[STDERR DEBUG] PacmanDatasetSimple _process_sequence: C_channels = {C_channels}", file=sys.stderr)
-        self.logger.handlers[0].flush() # Try to flush the primary handler
 
         # Encode actions
         # actions_list will have L_config actions
@@ -159,7 +158,6 @@ class PacmanDatasetSimple(IterableDataset):
         N_obs_y_frames = L_config - 1 # This should be 5 if L_config is 6
         self.logger.info(f"[PacmanDatasetSimple DEBUG] _process_sequence: Calculated N_obs_y_frames = {N_obs_y_frames}")
         print(f"[STDERR DEBUG] PacmanDatasetSimple _process_sequence: N_obs_y_frames = {N_obs_y_frames}", file=sys.stderr)
-        self.logger.handlers[0].flush()
 
         # Observations ('obs'): First N_obs_y_frames (i.e., L_config-1 frames)
         # obs_seq shape: [N_obs_y_frames, C_channels, H, W]
@@ -168,7 +166,6 @@ class PacmanDatasetSimple(IterableDataset):
         obs_flat = obs_seq.reshape(-1, frames_tensor.shape[2], frames_tensor.shape[3])
         self.logger.info(f"[PacmanDatasetSimple DEBUG] _process_sequence: obs_flat shape (before noise) = {obs_flat.shape}")
         print(f"[STDERR DEBUG] PacmanDatasetSimple _process_sequence: obs_flat shape = {obs_flat.shape}", file=sys.stderr)
-        self.logger.handlers[0].flush()
         
         # Add noise to observation frames
         # Noise is added to the already selected N_obs_y_frames
