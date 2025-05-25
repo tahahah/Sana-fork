@@ -127,14 +127,14 @@ class PacmanDatasetSimple(IterableDataset):
         for b_idx, b in enumerate(sequence):  # sequence here is the deque buffer of length L_config
             pil_img = b['frame_image']
             if self.vae is not None and self.load_vae_feat:
-                self.logger.info(f"[PacmanDatasetSimple DEBUG] Using VAE for frame {b_idx}")
+                print(f"[STDERR DEBUG] PacmanDatasetSimple _process_sequence: Using VAE for frame {b_idx}", file=sys.stderr)
                 x = self.transform(pil_img).unsqueeze(0).to(next(self.vae.parameters()).device)
                 z = self.vae.encoder(x).cpu().squeeze(0)  # Shape: [C_channels, H, W]
                 frames_list.append(z)
             else:
-                self.logger.info(f"[PacmanDatasetSimple DEBUG] Not using VAE for frame {b_idx}")
+                print(f"[STDERR DEBUG] PacmanDatasetSimple _process_sequence: Not using VAE for frame {b_idx}", file=sys.stderr)
                 frames_list.append(self.transform(pil_img))
-        self.logger.info(f"[PacmanDatasetSimple DEBUG] Processed {len(frames_list)} frames")
+        print(f"[STDERR DEBUG] PacmanDatasetSimple _process_sequence: Processed {len(frames_list)} frames", file=sys.stderr)
         
         # frames_tensor shape: [L_config, C_channels, H, W]
         frames_tensor = torch.stack(frames_list)
