@@ -395,10 +395,10 @@ def run_pacman_inference(config, args):
             keys = pygame.key.get_pressed()
             if not key_pressed:  # Only check if we haven't already processed a key event
                 if keys[pygame.K_LEFT]:
-                    current_action = 1
+                    current_action = 0
                     key_pressed = True
                 elif keys[pygame.K_RIGHT]:
-                    current_action = 0
+                    current_action = 1
                     key_pressed = True
                 elif keys[pygame.K_UP]:
                     current_action = 2
