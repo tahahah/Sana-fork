@@ -56,6 +56,7 @@ class PacmanDatasetSimple(IterableDataset):
         config=None,
         vae=None,
         debug=False,
+        is_validation_run=False, # New parameter
         **kwargs,
     ):
         # Image transform pipeline
@@ -102,7 +103,9 @@ class PacmanDatasetSimple(IterableDataset):
         )
         # Sliding window buffer
         self._buffer = deque(maxlen=self.sequence_length)
-        self.debug = debug
+        self.debug = debug # Store debug flag
+        self.is_validation_run = is_validation_run # Store validation run flag
+        self.last_raw_validation_data = None # Initialize for validation logging
 
     def __iter__(self):
         """Yield processed sequences as dicts with keys: obs, img, y, y_mask, data_info."""
@@ -129,6 +132,18 @@ class PacmanDatasetSimple(IterableDataset):
             y_mask = torch.empty((1, (L_config -1 if L_config > 0 else 0)))
             data_info = {'episode': 0, 'done': False}
             return {'obs': obs, 'img': img, 'y': y, 'y_mask': y_mask, 'data_info': data_info}
+
+        # Determine the segment of the sequence that will be processed for model input
+        if len(sequence) >= self.sequence_length:
+            actual_data_segment = sequence[-self.sequence_length:]
+        else:
+            actual_data_segment = sequence
+
+        if self.is_validation_run and actual_data_segment: # Ensure not empty
+            self.logger.info(f"[DEBUG PacmanDatasetSimple._process_sequence] is_validation_run is True. Storing raw data. Num frames: {len(actual_data_segment)}")
+            raw_pil_images = [b['frame_image'] for b in actual_data_segment]
+            raw_actions = [b['action'] for b in actual_data_segment]
+            self.last_raw_validation_data = {'raw_frames': raw_pil_images, 'raw_actions': raw_actions}
 
         # Encode frames
         frames_list = []
@@ -226,6 +241,13 @@ class PacmanDatasetSimple(IterableDataset):
             'y_mask': y_mask,         # Tensor, shape: [1, L_config-1]
             'data_info': data_info,   # dict: {episode: int, done: bool}
         }
+
+    def get_last_raw_validation_data(self):
+        """Retrieves the last stored raw data for validation logging and clears it."""
+        self.logger.info(f"[DEBUG PacmanDatasetSimple.get_last_raw_validation_data] Called. Data is {'not None' if self.last_raw_validation_data else 'None'}. Clearing it.")
+        data = self.last_raw_validation_data
+        self.last_raw_validation_data = None  # Clear after retrieval
+        return data
 
     def __len__(self):
         # Number of examples (approx) from the HF dataset
