@@ -124,17 +124,17 @@ class PacmanDatasetSimple(IterableDataset):
 
         # Encode frames
         frames_list = []
-        for b_idx, b in enumerate(sequence): # sequence here is the deque buffer of length L_config
+        for b_idx, b in enumerate(sequence):  # sequence here is the deque buffer of length L_config
             pil_img = b['frame_image']
             if self.vae is not None and self.load_vae_feat:
-                # Assuming self.transform prepares for VAE and VAE outputs [C_vae, H, W]
-                # C_vae is likely 4 based on previous error analysis.
+                self.logger.info(f"[PacmanDatasetSimple DEBUG] Using VAE for frame {b_idx}")
                 x = self.transform(pil_img).unsqueeze(0).to(next(self.vae.parameters()).device)
-                z = self.vae.encoder(x).cpu().squeeze(0) # Shape: [C_channels, H, W]
+                z = self.vae.encoder(x).cpu().squeeze(0)  # Shape: [C_channels, H, W]
                 frames_list.append(z)
             else:
-                # If not using VAE, transform should give [C_raw, H, W]
+                self.logger.info(f"[PacmanDatasetSimple DEBUG] Not using VAE for frame {b_idx}")
                 frames_list.append(self.transform(pil_img))
+        self.logger.info(f"[PacmanDatasetSimple DEBUG] Processed {len(frames_list)} frames")
         
         # frames_tensor shape: [L_config, C_channels, H, W]
         frames_tensor = torch.stack(frames_list)
@@ -196,7 +196,6 @@ class PacmanDatasetSimple(IterableDataset):
         print(f"[STDERR DEBUG] PacmanDatasetSimple _process_sequence: noisy_obs shape = {noisy_obs.shape}", file=sys.stderr)
         self.logger.info(f"[PacmanDatasetSimple DEBUG] _process_sequence: Returning img_target shape = {img_target.shape}")
         self.logger.info(f"[PacmanDatasetSimple DEBUG] _process_sequence: Returning y_target shape = {y_target.shape}")
-        self.logger.handlers[0].flush()
 
         return {
             'obs': noisy_obs,         # Tensor, shape: [(L_config-1)*C, H, W]
