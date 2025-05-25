@@ -55,15 +55,27 @@ class PacmanDatasetSimple(IterableDataset):
     ):
         # Image transform pipeline
         self.logger = get_root_logger()
-        self.transform = transform or transforms.Compose([
-            transforms.Lambda(convert_to_rgb),
-            transforms.Lambda(make_square),
-            transforms.Resize(resolution),
-            transforms.functional.hflip,
-            transforms.Lambda(rotate_90_clockwise),
-            transforms.ToTensor(),
-            transforms.Lambda(to_float16),  # Convert to float16
-        ])
+        # Ensure logger is at least INFO level for these messages
+        self.logger.setLevel("INFO") 
+        # For debugging, add a handler that prints to stderr immediately if logs don't appear
+        import logging
+        import sys
+        if not any(isinstance(h, logging.StreamHandler) and h.stream == sys.stderr for h in self.logger.handlers):
+            self.logger.addHandler(logging.StreamHandler(sys.stderr))
+        if transform is None: # Check if a transform was passed in
+            self.logger.info("[PacmanDatasetSimple DEBUG] __init__: Using default transforms.")
+            self.transform = transforms.Compose([
+                transforms.Lambda(convert_to_rgb),
+                transforms.Lambda(make_square),
+                transforms.Resize((self.resolution, self.resolution)),
+                transforms.ToTensor(),
+                # transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]) # Optional normalization
+                transforms.Lambda(to_float16),  # Convert to float16
+            ])
+        else:
+            self.logger.info(f"[PacmanDatasetSimple DEBUG] __init__: Using provided transform: {type(transform)}")
+            self.transform = transform # Use the provided transform
+
         self.vae = vae
         self.load_vae_feat = load_vae_feat
         self.sequence_length = sequence_length
@@ -125,8 +137,12 @@ class PacmanDatasetSimple(IterableDataset):
         frames_tensor = torch.stack(frames_list)
         C_channels = frames_tensor.shape[1] # Get actual channels from data (e.g., 4 for VAE)
         self.logger.info(f"[PacmanDatasetSimple DEBUG] _process_sequence: L_config (self.sequence_length) = {L_config}")
+        print(f"[STDERR DEBUG] PacmanDatasetSimple _process_sequence: L_config = {L_config}", file=sys.stderr)
         self.logger.info(f"[PacmanDatasetSimple DEBUG] _process_sequence: frames_tensor original shape = {frames_tensor.shape}")
+        print(f"[STDERR DEBUG] PacmanDatasetSimple _process_sequence: frames_tensor shape = {frames_tensor.shape}", file=sys.stderr)
         self.logger.info(f"[PacmanDatasetSimple DEBUG] _process_sequence: Detected C_channels = {C_channels}")
+        print(f"[STDERR DEBUG] PacmanDatasetSimple _process_sequence: C_channels = {C_channels}", file=sys.stderr)
+        self.logger.handlers[0].flush() # Try to flush the primary handler
 
         # Encode actions
         # actions_list will have L_config actions
@@ -139,6 +155,8 @@ class PacmanDatasetSimple(IterableDataset):
         # Number of frames for observation and corresponding actions
         N_obs_y_frames = L_config - 1 # This should be 5 if L_config is 6
         self.logger.info(f"[PacmanDatasetSimple DEBUG] _process_sequence: Calculated N_obs_y_frames = {N_obs_y_frames}")
+        print(f"[STDERR DEBUG] PacmanDatasetSimple _process_sequence: N_obs_y_frames = {N_obs_y_frames}", file=sys.stderr)
+        self.logger.handlers[0].flush()
 
         # Observations ('obs'): First N_obs_y_frames (i.e., L_config-1 frames)
         # obs_seq shape: [N_obs_y_frames, C_channels, H, W]
@@ -146,6 +164,8 @@ class PacmanDatasetSimple(IterableDataset):
         # obs_flat shape: [(N_obs_y_frames * C_channels), H, W]
         obs_flat = obs_seq.reshape(-1, frames_tensor.shape[2], frames_tensor.shape[3])
         self.logger.info(f"[PacmanDatasetSimple DEBUG] _process_sequence: obs_flat shape (before noise) = {obs_flat.shape}")
+        print(f"[STDERR DEBUG] PacmanDatasetSimple _process_sequence: obs_flat shape = {obs_flat.shape}", file=sys.stderr)
+        self.logger.handlers[0].flush()
         
         # Add noise to observation frames
         # Noise is added to the already selected N_obs_y_frames
@@ -173,8 +193,10 @@ class PacmanDatasetSimple(IterableDataset):
         }
         
         self.logger.info(f"[PacmanDatasetSimple DEBUG] _process_sequence: Returning noisy_obs shape = {noisy_obs.shape}")
+        print(f"[STDERR DEBUG] PacmanDatasetSimple _process_sequence: noisy_obs shape = {noisy_obs.shape}", file=sys.stderr)
         self.logger.info(f"[PacmanDatasetSimple DEBUG] _process_sequence: Returning img_target shape = {img_target.shape}")
         self.logger.info(f"[PacmanDatasetSimple DEBUG] _process_sequence: Returning y_target shape = {y_target.shape}")
+        self.logger.handlers[0].flush()
 
         return {
             'obs': noisy_obs,         # Tensor, shape: [(L_config-1)*C, H, W]
