@@ -126,7 +126,7 @@ class PacmanDatasetSimple(IterableDataset):
         frames_list = []
         for b_idx, b in enumerate(sequence):  # sequence here is the deque buffer of length L_config
             pil_img = b['frame_image']
-            if self.vae is not None and self.load_vae_feat:
+            if self.vae is not None and not self.load_vae_feat:
                 print(f"[STDERR DEBUG] PacmanDatasetSimple _process_sequence: Using VAE for frame {b_idx}", file=sys.stderr)
                 with torch.no_grad():
                     with torch.amp.autocast(
