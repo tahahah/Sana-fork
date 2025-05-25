@@ -67,7 +67,9 @@ class PacmanDatasetSimple(IterableDataset):
             self.transform = transforms.Compose([
                 transforms.Lambda(convert_to_rgb),
                 transforms.Lambda(make_square),
-                transforms.Resize((self.resolution, self.resolution)),
+            transforms.Resize(resolution),
+            transforms.functional.hflip,
+            transforms.Lambda(rotate_90_clockwise),
                 transforms.ToTensor(),
                 # transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]) # Optional normalization
                 transforms.Lambda(to_float16),  # Convert to float16
