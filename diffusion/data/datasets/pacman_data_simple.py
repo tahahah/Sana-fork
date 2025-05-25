@@ -7,6 +7,10 @@ from torchvision import transforms
 from diffusion.data.builder import DATASETS
 from diffusion.utils.logger import get_root_logger
 
+# For debugging, add a handler that prints to stderr immediately if logs don't appear
+import logging
+import sys
+
 # Utility functions for image preprocessing
 
 def make_square(image):
@@ -57,9 +61,6 @@ class PacmanDatasetSimple(IterableDataset):
         self.logger = get_root_logger()
         # Ensure logger is at least INFO level for these messages
         self.logger.setLevel("INFO") 
-        # For debugging, add a handler that prints to stderr immediately if logs don't appear
-        import logging
-        import sys
         if not any(isinstance(h, logging.StreamHandler) and h.stream == sys.stderr for h in self.logger.handlers):
             self.logger.addHandler(logging.StreamHandler(sys.stderr))
         if transform is None: # Check if a transform was passed in
