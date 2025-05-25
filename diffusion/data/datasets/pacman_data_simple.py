@@ -88,44 +88,88 @@ class PacmanDatasetSimple(IterableDataset):
                 yield self._process_sequence(list(self._buffer))
 
     def _process_sequence(self, sequence):
+        # L_config is self.sequence_length from the YAML (expected to be 6)
+        L_config = self.sequence_length
+
+        if L_config < 2:
+            self.logger.error(
+                f"Dataset sequence_length ({L_config}) in your YAML must be at least 2."
+            )
+            # Fallback for invalid configuration
+            C_channels = 4 # Assuming VAE output channels
+            H_res, W_res = (self.resolution, self.resolution)
+            action_dim = 5
+            obs = torch.empty(((L_config -1 if L_config > 0 else 0) * C_channels, H_res, W_res))
+            img = torch.empty((C_channels, H_res, W_res))
+            y = torch.empty((1, (L_config -1 if L_config > 0 else 0), action_dim))
+            y_mask = torch.empty((1, (L_config -1 if L_config > 0 else 0)))
+            data_info = {'episode': 0, 'done': False}
+            return {'obs': obs, 'img': img, 'y': y, 'y_mask': y_mask, 'data_info': data_info}
+
         # Encode frames
-        frames = []
-        for b in sequence:
-            img = b['frame_image']
+        frames_list = []
+        for b_idx, b in enumerate(sequence): # sequence here is the deque buffer of length L_config
+            pil_img = b['frame_image']
             if self.vae is not None and self.load_vae_feat:
-                x = self.transform(img).unsqueeze(0).to(next(self.vae.parameters()).device)
-                z = self.vae.encoder(x).cpu().squeeze(0)
-                frames.append(z)
+                # Assuming self.transform prepares for VAE and VAE outputs [C_vae, H, W]
+                # C_vae is likely 4 based on previous error analysis.
+                x = self.transform(pil_img).unsqueeze(0).to(next(self.vae.parameters()).device)
+                z = self.vae.encoder(x).cpu().squeeze(0) # Shape: [C_channels, H, W]
+                frames_list.append(z)
             else:
-                frames.append(self.transform(img))
-        frames = torch.stack(frames)  # [L, C, H, W]
+                # If not using VAE, transform should give [C_raw, H, W]
+                frames_list.append(self.transform(pil_img))
+        
+        # frames_tensor shape: [L_config, C_channels, H, W]
+        frames_tensor = torch.stack(frames_list)
+        C_channels = frames_tensor.shape[1] # Get actual channels from data (e.g., 4 for VAE)
+
         # Encode actions
-        actions = [self._cached_one_hot[b['action']] for b in sequence]
-        actions = torch.stack(actions).unsqueeze(0)  # [1, L, 5]
-        # Stagger offset logic
-        stagger_offset = 1
-        L = self.sequence_length
-        num_preds = max(L - stagger_offset - 1, 0)
-        # Observations
-        if num_preds > 0:
-            obs_seq = frames[stagger_offset : stagger_offset + L]  # [num_preds, C, H, W]
-            obs = obs_seq.reshape(-1, frames.shape[2], frames.shape[3])  # [(num_preds*C), H, W]
-        else:
-            obs = torch.empty((0, frames.shape[2], frames.shape[3]))
-        # Target image
-        img = frames[-1]  # [C, H, W]
-        # Target actions and mask
-        y = actions[:, :L, :]  # [1, L, 5]
-        y_mask = torch.ones((1, L), dtype=torch.float32)
-        # Data info
+        # actions_list will have L_config actions
+        actions_list = [self._cached_one_hot[b['action']] for b in sequence]
+        # actions_tensor_orig shape: [L_config, 5_action_dim]
+        actions_tensor_orig = torch.stack(actions_list)
+        # actions_tensor shape: [1, L_config, 5_action_dim]
+        actions_tensor = actions_tensor_orig.unsqueeze(0)
+
+        # Number of frames for observation and corresponding actions
+        N_obs_y_frames = L_config - 1 # This should be 5 if L_config is 6
+
+        # Observations ('obs'): First N_obs_y_frames (i.e., L_config-1 frames)
+        # obs_seq shape: [N_obs_y_frames, C_channels, H, W]
+        obs_seq = frames_tensor[0:N_obs_y_frames, :, :, :]
+        # obs_flat shape: [(N_obs_y_frames * C_channels), H, W]
+        obs_flat = obs_seq.reshape(-1, frames_tensor.shape[2], frames_tensor.shape[3])
+        
+        # Add noise to observation frames
+        # Noise is added to the already selected N_obs_y_frames
+        noise = torch.randn_like(obs_flat)
+        # Using a fixed or mildly random scale for noise as in original.
+        # Adjust 0.1 if you need more/less noise.
+        noisy_obs = obs_flat + 0.4 * torch.rand(1).item() * noise 
+
+        # Target Image ('img'): The last frame of the L_config sequence
+        # img_target shape: [C_channels, H, W]
+        img_target = frames_tensor[-1, :, :, :]
+
+        # Target Actions ('y'): Actions from the 2nd timestep up to L_config
+        # This means y has N_obs_y_frames (i.e., L_config-1) action steps.
+        # y_target shape: [1, N_obs_y_frames, 5_action_dim]
+        y_target = actions_tensor[:, 1:L_config, :]
+
+        # Action Mask ('y_mask')
+        # y_mask shape: [1, N_obs_y_frames]
+        y_mask = torch.ones((1, N_obs_y_frames), dtype=torch.float32)
+        
         data_info = {
-            'episode': sequence[-1].get('episode', 0),
+            'episode': sequence[-1].get('episode', 0), # Get info from the last sample in the deque
             'done': sequence[-1].get('done', False),
         }
+
         return {
-            'obs': obs,
-            'img': img,
-            'y': y,
+            'obs': noisy_obs,
+            'img': img_target,
+            'y': y_target,
             'y_mask': y_mask,
             'data_info': data_info,
         }
