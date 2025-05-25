@@ -80,6 +80,13 @@ class PacmanDatasetSimple(IterableDataset):
             self.transform = transform # Use the provided transform
 
         self.vae = vae
+        
+        self.config = config
+        # Default to fp32 if no config provided
+        self.mixed_precision = "fp32"
+        if config is not None and hasattr(config, 'model') and hasattr(config.model, 'mixed_precision'):
+            self.mixed_precision = config.model.mixed_precision
+
         self.load_vae_feat = load_vae_feat
         self.sequence_length = sequence_length
         # One-hot cache for actions
