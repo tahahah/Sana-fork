@@ -55,6 +55,7 @@ class PacmanDatasetSimple(IterableDataset):
         prefetch_factor=None,
         config=None,
         vae=None,
+        debug=False,
         **kwargs,
     ):
         # Image transform pipeline
@@ -72,7 +73,6 @@ class PacmanDatasetSimple(IterableDataset):
             transforms.functional.hflip,
             transforms.Lambda(rotate_90_clockwise),
                 transforms.ToTensor(),
-                # transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]) # Optional normalization
                 transforms.Lambda(to_float16),  # Convert to float16
             ])
         else:
@@ -102,6 +102,7 @@ class PacmanDatasetSimple(IterableDataset):
         )
         # Sliding window buffer
         self._buffer = deque(maxlen=self.sequence_length)
+        self.debug = debug
 
     def __iter__(self):
         """Yield processed sequences as dicts with keys: obs, img, y, y_mask, data_info."""
@@ -134,7 +135,8 @@ class PacmanDatasetSimple(IterableDataset):
         for b_idx, b in enumerate(sequence):  # sequence here is the deque buffer of length L_config
             pil_img = b['frame_image']
             if self.vae is not None and not self.load_vae_feat:
-                print(f"[STDERR DEBUG] PacmanDatasetSimple _process_sequence: Using VAE for frame {b_idx}", file=sys.stderr)
+                if self.debug:
+                    print(f"[STDERR DEBUG] PacmanDatasetSimple _process_sequence: Using VAE for frame {b_idx}", file=sys.stderr)
                 with torch.no_grad():
                     with torch.amp.autocast(
                         "cuda",
@@ -144,19 +146,24 @@ class PacmanDatasetSimple(IterableDataset):
                         z = self.vae.encoder(x).cpu().squeeze(0)  # Shape: [C_channels, H, W]
                         frames_list.append(z)
             else:
-                print(f"[STDERR DEBUG] PacmanDatasetSimple _process_sequence: Not using VAE for frame {b_idx}", file=sys.stderr)
+                if self.debug:
+                    print(f"[STDERR DEBUG] PacmanDatasetSimple _process_sequence: Not using VAE for frame {b_idx}", file=sys.stderr)
                 frames_list.append(self.transform(pil_img))
-        print(f"[STDERR DEBUG] PacmanDatasetSimple _process_sequence: Processed {len(frames_list)} frames", file=sys.stderr)
+        if self.debug:
+            print(f"[STDERR DEBUG] PacmanDatasetSimple _process_sequence: Processed {len(frames_list)} frames", file=sys.stderr)
         
         # frames_tensor shape: [L_config, C_channels, H, W]
         frames_tensor = torch.stack(frames_list)
         C_channels = frames_tensor.shape[1] # Get actual channels from data (e.g., 4 for VAE)
         self.logger.info(f"[PacmanDatasetSimple DEBUG] _process_sequence: L_config (self.sequence_length) = {L_config}")
-        print(f"[STDERR DEBUG] PacmanDatasetSimple _process_sequence: L_config = {L_config}", file=sys.stderr)
+        if self.debug:
+            print(f"[STDERR DEBUG] PacmanDatasetSimple _process_sequence: L_config = {L_config}", file=sys.stderr)
         self.logger.info(f"[PacmanDatasetSimple DEBUG] _process_sequence: frames_tensor original shape = {frames_tensor.shape}")
-        print(f"[STDERR DEBUG] PacmanDatasetSimple _process_sequence: frames_tensor shape = {frames_tensor.shape}", file=sys.stderr)
+        if self.debug:
+            print(f"[STDERR DEBUG] PacmanDatasetSimple _process_sequence: frames_tensor shape = {frames_tensor.shape}", file=sys.stderr)
         self.logger.info(f"[PacmanDatasetSimple DEBUG] _process_sequence: Detected C_channels = {C_channels}")
-        print(f"[STDERR DEBUG] PacmanDatasetSimple _process_sequence: C_channels = {C_channels}", file=sys.stderr)
+        if self.debug:
+            print(f"[STDERR DEBUG] PacmanDatasetSimple _process_sequence: C_channels = {C_channels}", file=sys.stderr)
 
         # Encode actions
         # actions_list will have L_config actions
@@ -169,15 +176,17 @@ class PacmanDatasetSimple(IterableDataset):
         # Number of frames for observation and corresponding actions
         N_obs_y_frames = L_config - 1 # This should be 5 if L_config is 6
         self.logger.info(f"[PacmanDatasetSimple DEBUG] _process_sequence: Calculated N_obs_y_frames = {N_obs_y_frames}")
-        print(f"[STDERR DEBUG] PacmanDatasetSimple _process_sequence: N_obs_y_frames = {N_obs_y_frames}", file=sys.stderr)
+        if self.debug:
+            print(f"[STDERR DEBUG] PacmanDatasetSimple _process_sequence: N_obs_y_frames = {N_obs_y_frames}", file=sys.stderr)
 
         # Observations ('obs'): First N_obs_y_frames (i.e., L_config-1 frames)
         # obs_seq shape: [N_obs_y_frames, C_channels, H, W]
-        obs_seq = frames_tensor[0:N_obs_y_frames, :, :, :]
+        obs_seq = frames_tensor[:N_obs_y_frames, :, :, :]
         # obs_flat shape: [(N_obs_y_frames * C_channels), H, W]
         obs_flat = obs_seq.reshape(-1, frames_tensor.shape[2], frames_tensor.shape[3])
         self.logger.info(f"[PacmanDatasetSimple DEBUG] _process_sequence: obs_flat shape (before noise) = {obs_flat.shape}")
-        print(f"[STDERR DEBUG] PacmanDatasetSimple _process_sequence: obs_flat shape = {obs_flat.shape}", file=sys.stderr)
+        if self.debug:
+            print(f"[STDERR DEBUG] PacmanDatasetSimple _process_sequence: obs_flat shape = {obs_flat.shape}", file=sys.stderr)
         
         # Add noise to observation frames
         # Noise is added to the already selected N_obs_y_frames
@@ -205,7 +214,8 @@ class PacmanDatasetSimple(IterableDataset):
         }
         
         self.logger.info(f"[PacmanDatasetSimple DEBUG] _process_sequence: Returning noisy_obs shape = {noisy_obs.shape}")
-        print(f"[STDERR DEBUG] PacmanDatasetSimple _process_sequence: noisy_obs shape = {noisy_obs.shape}", file=sys.stderr)
+        if self.debug:
+            print(f"[STDERR DEBUG] PacmanDatasetSimple _process_sequence: noisy_obs shape = {noisy_obs.shape}", file=sys.stderr)
         self.logger.info(f"[PacmanDatasetSimple DEBUG] _process_sequence: Returning img_target shape = {img_target.shape}")
         self.logger.info(f"[PacmanDatasetSimple DEBUG] _process_sequence: Returning y_target shape = {y_target.shape}")
 
