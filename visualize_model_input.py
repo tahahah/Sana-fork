@@ -2,7 +2,7 @@ import torch
 import matplotlib.pyplot as plt
 import numpy as np
 import random
-from pacman_data_simple import PacmanDataset
+from pacman_data_simple import PacmanDatasetSimple as PacmanDataset
 from torch.utils.data import DataLoader
 from matplotlib.widgets import Button
 
@@ -167,7 +167,7 @@ def visualize_model_input(sequence_length_param=8, resolution_param=128):
     # User's PacmanDataset instantiation (from Step 118)
     ds = PacmanDataset(transform=None, load_vae_feat=False, load_text_feat=False,
                        sequence_length=sequence_length_param, resolution=resolution_param, 
-                       buffer_size=10, prefetch_factor=1) # User's buffer/prefetch
+                       buffer_size=10, prefetch_factor=1, debug=True) # User's buffer/prefetch
     
     # User's DataLoader batch_size setting (from Step 118)
     # This means each item from dataloader_instance IS a batch of 'sequence_length_param' sequences

@@ -114,137 +114,90 @@ class PacmanDatasetSimple(IterableDataset):
             if len(self._buffer) == self.sequence_length:
                 yield self._process_sequence(list(self._buffer))
 
-    def _process_sequence(self, sequence):
-        # L_config is self.sequence_length from the YAML (expected to be 6)
+    def _process_sequence(self, sequence): # sequence is a list of L_config items from the buffer
         L_config = self.sequence_length
 
-        if L_config < 2:
-            self.logger.error(
-                f"Dataset sequence_length ({L_config}) in your YAML must be at least 2."
-            )
-            # Fallback for invalid configuration
-            C_channels = 4 # Assuming VAE output channels
-            H_res, W_res = (self.resolution, self.resolution)
-            action_dim = 5
-            obs = torch.empty(((L_config -1 if L_config > 0 else 0) * C_channels, H_res, W_res))
-            img = torch.empty((C_channels, H_res, W_res))
-            y = torch.empty((1, (L_config -1 if L_config > 0 else 0), action_dim))
-            y_mask = torch.empty((1, (L_config -1 if L_config > 0 else 0)))
-            data_info = {'episode': 0, 'done': False}
-            return {'obs': obs, 'img': img, 'y': y, 'y_mask': y_mask, 'data_info': data_info}
+        # L_config >= 2 is implicitly handled as __iter__ calls this only when buffer is full to sequence_length,
+        # and __init__ has checks for sequence_length.
 
-        # Determine the segment of the sequence that will be processed for model input
-        if len(sequence) >= self.sequence_length:
-            actual_data_segment = sequence[-self.sequence_length:]
-        else:
-            actual_data_segment = sequence
-
-        if self.is_validation_run and actual_data_segment: # Ensure not empty
-            self.logger.info(f"[DEBUG PacmanDatasetSimple._process_sequence] is_validation_run is True. Storing raw data. Num frames: {len(actual_data_segment)}")
-            raw_pil_images = [b['frame_image'] for b in actual_data_segment]
-            raw_actions = [b['action'] for b in actual_data_segment]
+        if self.is_validation_run:
+            if self.debug:
+                self.logger.info(f"[DEBUG PacmanDatasetSimple._process_sequence] Validation run. Storing raw data. Num frames in sequence: {len(sequence)}")
+            raw_pil_images = [b['frame_image'] for b in sequence]
+            raw_actions = [b['action'] for b in sequence]
             self.last_raw_validation_data = {'raw_frames': raw_pil_images, 'raw_actions': raw_actions}
 
-        # Encode frames
         frames_list = []
-        for b_idx, b in enumerate(sequence):  # sequence here is the deque buffer of length L_config
-            pil_img = b['frame_image']
+        for b_idx, b_data in enumerate(sequence):
+            pil_img = b_data['frame_image']
             if self.vae is not None and not self.load_vae_feat:
-                if self.debug:
-                    print(f"[STDERR DEBUG] PacmanDatasetSimple _process_sequence: Using VAE for frame {b_idx}", file=sys.stderr)
-                with torch.no_grad():
-                    with torch.amp.autocast(
-                        "cuda",
-                        enabled=(self.mixed_precision == "fp16" or self.mixed_precision == "bf16"),
-                    ):
-                        x = self.transform(pil_img).unsqueeze(0).to(next(self.vae.parameters()).device)
-                        z = self.vae.encoder(x).cpu().squeeze(0)  # Shape: [C_channels, H, W]
-                        frames_list.append(z)
+                if self.debug: print(f"[STDERR DEBUG] PacmanDatasetSimple _process_sequence: Using VAE for frame {b_idx}", file=sys.stderr)
+                with torch.no_grad(), torch.amp.autocast("cuda", enabled=(self.mixed_precision in ["fp16", "bf16"])):
+                    x = self.transform(pil_img).unsqueeze(0).to(next(self.vae.parameters()).device)
+                    frames_list.append(self.vae.encoder(x).cpu().squeeze(0))
             else:
-                if self.debug:
-                    print(f"[STDERR DEBUG] PacmanDatasetSimple _process_sequence: Not using VAE for frame {b_idx}", file=sys.stderr)
+                if self.debug: print(f"[STDERR DEBUG] PacmanDatasetSimple _process_sequence: Not using VAE for frame {b_idx}", file=sys.stderr)
                 frames_list.append(self.transform(pil_img))
-        if self.debug:
-            print(f"[STDERR DEBUG] PacmanDatasetSimple _process_sequence: Processed {len(frames_list)} frames", file=sys.stderr)
         
-        # frames_tensor shape: [L_config, C_channels, H, W]
-        frames_tensor = torch.stack(frames_list)
-        C_channels = frames_tensor.shape[1] # Get actual channels from data (e.g., 4 for VAE)
-        self.logger.info(f"[PacmanDatasetSimple DEBUG] _process_sequence: L_config (self.sequence_length) = {L_config}")
-        if self.debug:
-            print(f"[STDERR DEBUG] PacmanDatasetSimple _process_sequence: L_config = {L_config}", file=sys.stderr)
-        self.logger.info(f"[PacmanDatasetSimple DEBUG] _process_sequence: frames_tensor original shape = {frames_tensor.shape}")
-        if self.debug:
-            print(f"[STDERR DEBUG] PacmanDatasetSimple _process_sequence: frames_tensor shape = {frames_tensor.shape}", file=sys.stderr)
-        self.logger.info(f"[PacmanDatasetSimple DEBUG] _process_sequence: Detected C_channels = {C_channels}")
-        if self.debug:
-            print(f"[STDERR DEBUG] PacmanDatasetSimple _process_sequence: C_channels = {C_channels}", file=sys.stderr)
+        frames_tensor = torch.stack(frames_list) # Shape: [L_config, C, H, W]
+        C_channels = frames_tensor.shape[1]
+        
+        actions_list = [self._cached_one_hot[b_data['action']] for b_data in sequence]
+        actions_tensor = torch.stack(actions_list).unsqueeze(0) # Shape: [1, L_config, ActionDim]
 
-        # Encode actions
-        # actions_list will have L_config actions
-        actions_list = [self._cached_one_hot[b['action']] for b in sequence]
-        # actions_tensor_orig shape: [L_config, 5_action_dim]
-        actions_tensor_orig = torch.stack(actions_list)
-        # actions_tensor shape: [1, L_config, 5_action_dim]
-        actions_tensor = actions_tensor_orig.unsqueeze(0)
+        # N_obs_y_len is the number of frames in the observation sequence and number of target actions.
+        N_obs_y_len = L_config - 1 
+        stagger_offset = 1 # Start observations from frames_tensor[stagger_offset]
 
-        # Number of frames for observation and corresponding actions
-        N_obs_y_frames = L_config - 1 # This should be 5 if L_config is 6
-        self.logger.info(f"[PacmanDatasetSimple DEBUG] _process_sequence: Calculated N_obs_y_frames = {N_obs_y_frames}")
         if self.debug:
-            print(f"[STDERR DEBUG] PacmanDatasetSimple _process_sequence: N_obs_y_frames = {N_obs_y_frames}", file=sys.stderr)
+            self.logger.info(f"[PacmanDatasetSimple DEBUG] _process_sequence: L_config={L_config}, N_obs_y_len={N_obs_y_len}, stagger_offset={stagger_offset}")
+            self.logger.info(f"[PacmanDatasetSimple DEBUG] _process_sequence: frames_tensor shape: {frames_tensor.shape}, C_channels: {C_channels}")
+            self.logger.info(f"[PacmanDatasetSimple DEBUG] _process_sequence: actions_tensor shape: {actions_tensor.shape}")
 
-        # Observations ('obs'): First N_obs_y_frames (i.e., L_config-1 frames)
-        # obs_seq shape: [N_obs_y_frames, C_channels, H, W]
-        obs_seq = frames_tensor[:N_obs_y_frames, :, :, :]
-        # obs_flat shape: [(N_obs_y_frames * C_channels), H, W]
+        # Observations ('obs'): N_obs_y_len frames, starting from stagger_offset
+        # e.g., if L_config=6, N_obs_y_len=5, stagger=1: obs uses F_1, F_2, F_3, F_4, F_5
+        obs_seq = frames_tensor[stagger_offset : stagger_offset + N_obs_y_len, :, :, :]
+        # obs_flat shape: [N_obs_y_len * C_channels, H, W]
         obs_flat = obs_seq.reshape(-1, frames_tensor.shape[2], frames_tensor.shape[3])
-        self.logger.info(f"[PacmanDatasetSimple DEBUG] _process_sequence: obs_flat shape (before noise) = {obs_flat.shape}")
-        if self.debug:
-            print(f"[STDERR DEBUG] PacmanDatasetSimple _process_sequence: obs_flat shape = {obs_flat.shape}", file=sys.stderr)
+
+        if self.debug: self.logger.info(f"[PacmanDatasetSimple DEBUG] _process_sequence: obs_flat shape (before noise) = {obs_flat.shape}")
         
-        # Add noise to observation frames
-        # Noise is added to the already selected N_obs_y_frames
-        noise = torch.randn_like(obs_flat)
-        # Using a fixed or mildly random scale for noise as in original.
-        # Adjust 0.1 if you need more/less noise.
-        noisy_obs = obs_flat + 0.4 * torch.rand(1).item() * noise 
+        # Add noise to observations. N_obs_y_len >= 1 since L_config >= 2.
+        noisy_obs = obs_flat + 0.5 * torch.rand(1).item() * torch.randn_like(obs_flat)
 
-        # Target Image ('img'): The last frame of the L_config sequence
-        # img_target shape: [C_channels, H, W]
-        img_target = frames_tensor[-1, :, :, :]
+        # Target Image ('img'): Last frame of the L_config window (F_{L_config-1})
+        img_target = frames_tensor[-1, :, :, :] 
+        # Target Actions ('y'): N_obs_y_len actions, A_0 to A_{N_obs_y_len - 1}
+        # e.g., if L_config=6, N_obs_y_len=5: y uses A_0, A_1, A_2, A_3, A_4
+        y_target = actions_tensor[:, 0 : N_obs_y_len, :] # Shape: [1, N_obs_y_len, ActionDim]
 
-        # Target Actions ('y'): Actions from the 2nd timestep up to L_config
-        # This means y has N_obs_y_frames (i.e., L_config-1) action steps.
-        # y_target shape: [1, N_obs_y_frames, 5_action_dim]
-        y_target = actions_tensor[:, 1:L_config, :]
+        # Mask for target actions ('y_mask')
+        y_mask = torch.ones((1, N_obs_y_len), dtype=torch.float32, device=frames_tensor.device)
 
-        # Action Mask ('y_mask')
-        # y_mask shape: [1, N_obs_y_frames]
-        y_mask = torch.ones((1, N_obs_y_frames), dtype=torch.float32)
-        
+        # Data info from the last sample in the original L_config sequence segment
         data_info = {
-            'episode': sequence[-1].get('episode', 0), # Get info from the last sample in the deque
+            'episode': sequence[-1].get('episode', 0), 
             'done': sequence[-1].get('done', False),
         }
         
-        self.logger.info(f"[PacmanDatasetSimple DEBUG] _process_sequence: Returning noisy_obs shape = {noisy_obs.shape}")
         if self.debug:
+            self.logger.info(f"[PacmanDatasetSimple DEBUG] _process_sequence: Returning noisy_obs shape = {noisy_obs.shape}")
             print(f"[STDERR DEBUG] PacmanDatasetSimple _process_sequence: noisy_obs shape = {noisy_obs.shape}", file=sys.stderr)
-        self.logger.info(f"[PacmanDatasetSimple DEBUG] _process_sequence: Returning img_target shape = {img_target.shape}")
-        self.logger.info(f"[PacmanDatasetSimple DEBUG] _process_sequence: Returning y_target shape = {y_target.shape}")
+            self.logger.info(f"[PacmanDatasetSimple DEBUG] _process_sequence: Returning img_target shape = {img_target.shape}")
+            self.logger.info(f"[PacmanDatasetSimple DEBUG] _process_sequence: Returning y_target shape = {y_target.shape}")
 
         return {
-            'obs': noisy_obs,         # Tensor, shape: [(L_config-1)*C, H, W]
-            'img': img_target,        # Tensor, shape: [C, H, W]
-            'y': y_target,            # Tensor, shape: [1, L_config-1, 5]
-            'y_mask': y_mask,         # Tensor, shape: [1, L_config-1]
-            'data_info': data_info,   # dict: {episode: int, done: bool}
-        }
+            'obs': noisy_obs,         # Expected shape: [(L_config-1)*C, H, W]
+            'img': img_target,        # Expected shape: [C, H, W]
+            'y': y_target,            # Expected shape: [1, L_config-1, ActionDim]
+            'y_mask': y_mask,         # Expected shape: [1, L_config-1]
+            'data_info': data_info,
+        }   
 
     def get_last_raw_validation_data(self):
         """Retrieves the last stored raw data for validation logging and clears it."""
-        self.logger.info(f"[DEBUG PacmanDatasetSimple.get_last_raw_validation_data] Called. Data is {'not None' if self.last_raw_validation_data else 'None'}. Clearing it.")
+        if self.debug:
+            self.logger.info(f"[DEBUG PacmanDatasetSimple.get_last_raw_validation_data] Called. Data is {'not None' if self.last_raw_validation_data else 'None'}. Clearing it.")
         data = self.last_raw_validation_data
         self.last_raw_validation_data = None  # Clear after retrieval
         return data
