@@ -54,6 +54,7 @@ class PacmanDatasetSimple(IterableDataset):
         **kwargs,
     ):
         # Image transform pipeline
+        self.logger = get_root_logger()
         self.transform = transform or transforms.Compose([
             transforms.Lambda(convert_to_rgb),
             transforms.Lambda(make_square),
@@ -123,6 +124,9 @@ class PacmanDatasetSimple(IterableDataset):
         # frames_tensor shape: [L_config, C_channels, H, W]
         frames_tensor = torch.stack(frames_list)
         C_channels = frames_tensor.shape[1] # Get actual channels from data (e.g., 4 for VAE)
+        self.logger.info(f"[PacmanDatasetSimple DEBUG] _process_sequence: L_config (self.sequence_length) = {L_config}")
+        self.logger.info(f"[PacmanDatasetSimple DEBUG] _process_sequence: frames_tensor original shape = {frames_tensor.shape}")
+        self.logger.info(f"[PacmanDatasetSimple DEBUG] _process_sequence: Detected C_channels = {C_channels}")
 
         # Encode actions
         # actions_list will have L_config actions
@@ -134,12 +138,14 @@ class PacmanDatasetSimple(IterableDataset):
 
         # Number of frames for observation and corresponding actions
         N_obs_y_frames = L_config - 1 # This should be 5 if L_config is 6
+        self.logger.info(f"[PacmanDatasetSimple DEBUG] _process_sequence: Calculated N_obs_y_frames = {N_obs_y_frames}")
 
         # Observations ('obs'): First N_obs_y_frames (i.e., L_config-1 frames)
         # obs_seq shape: [N_obs_y_frames, C_channels, H, W]
         obs_seq = frames_tensor[0:N_obs_y_frames, :, :, :]
         # obs_flat shape: [(N_obs_y_frames * C_channels), H, W]
         obs_flat = obs_seq.reshape(-1, frames_tensor.shape[2], frames_tensor.shape[3])
+        self.logger.info(f"[PacmanDatasetSimple DEBUG] _process_sequence: obs_flat shape (before noise) = {obs_flat.shape}")
         
         # Add noise to observation frames
         # Noise is added to the already selected N_obs_y_frames
@@ -165,13 +171,17 @@ class PacmanDatasetSimple(IterableDataset):
             'episode': sequence[-1].get('episode', 0), # Get info from the last sample in the deque
             'done': sequence[-1].get('done', False),
         }
+        
+        self.logger.info(f"[PacmanDatasetSimple DEBUG] _process_sequence: Returning noisy_obs shape = {noisy_obs.shape}")
+        self.logger.info(f"[PacmanDatasetSimple DEBUG] _process_sequence: Returning img_target shape = {img_target.shape}")
+        self.logger.info(f"[PacmanDatasetSimple DEBUG] _process_sequence: Returning y_target shape = {y_target.shape}")
 
         return {
-            'obs': noisy_obs,
-            'img': img_target,
-            'y': y_target,
-            'y_mask': y_mask,
-            'data_info': data_info,
+            'obs': noisy_obs,         # Tensor, shape: [(L_config-1)*C, H, W]
+            'img': img_target,        # Tensor, shape: [C, H, W]
+            'y': y_target,            # Tensor, shape: [1, L_config-1, 5]
+            'y_mask': y_mask,         # Tensor, shape: [1, L_config-1]
+            'data_info': data_info,   # dict: {episode: int, done: bool}
         }
 
     def __len__(self):
