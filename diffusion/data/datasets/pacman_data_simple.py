@@ -133,6 +133,7 @@ class PacmanDatasetSimple(IterableDataset):
             self.last_raw_validation_data = {'raw_frames': raw_pil_images, 'raw_actions': raw_actions}
 
         frames_list = []
+        val_obs = []
         for b_idx, b_data in enumerate(sequence):
             pil_img = b_data['frame_image']
             if self.vae is not None and not self.load_vae_feat:
@@ -143,6 +144,8 @@ class PacmanDatasetSimple(IterableDataset):
             else:
                 if self.debug: print(f"[STDERR DEBUG] PacmanDatasetSimple _process_sequence: Not using VAE for frame {b_idx}", file=sys.stderr)
                 frames_list.append(self.transform(pil_img))
+            if self.is_validation_run:
+                val_obs.append(pil_img)
         
         frames_tensor = torch.stack(frames_list) # Shape: [L_config, C, H, W]
         C_channels = frames_tensor.shape[1]
@@ -162,9 +165,10 @@ class PacmanDatasetSimple(IterableDataset):
         # Observations ('obs'): N_obs_y_len frames, starting from stagger_offset
         # e.g., if L_config=6, N_obs_y_len=5, stagger=1: obs uses F_1, F_2, F_3, F_4, F_5
         obs_seq = frames_tensor[stagger_offset : stagger_offset + N_obs_y_len, :, :, :]
+        val_obs = val_obs[stagger_offset : stagger_offset + N_obs_y_len]
+        
         # obs_flat shape: [N_obs_y_len * C_channels, H, W]
         obs_flat = obs_seq.reshape(-1, frames_tensor.shape[2], frames_tensor.shape[3])
-
         if self.debug: self.logger.info(f"[PacmanDatasetSimple DEBUG] _process_sequence: obs_flat shape (before noise) = {obs_flat.shape}")
         
         # Add noise to observations. N_obs_y_len >= 1 since L_config >= 2.
@@ -192,6 +196,7 @@ class PacmanDatasetSimple(IterableDataset):
             self.logger.info(f"[PacmanDatasetSimple DEBUG] _process_sequence: Returning y_target shape = {y_target.shape}")
 
         return {
+            'val_obs': val_obs,
             'obs': noisy_obs,         # Expected shape: [(L_config-1)*C, H, W]
             'img': img_target,        # Expected shape: [C, H, W]
             'y': y_target,            # Expected shape: [1, L_config-1, ActionDim]
