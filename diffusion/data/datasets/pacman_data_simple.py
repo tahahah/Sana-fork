@@ -133,7 +133,7 @@ class PacmanDatasetSimple(IterableDataset):
             self.last_raw_validation_data = {'raw_frames': raw_pil_images, 'raw_actions': raw_actions}
 
         frames_list = []
-        val_obs = []
+        val_obs_list = [] # Initialize val_obs_list
         for b_idx, b_data in enumerate(sequence):
             pil_img = b_data['frame_image']
             if self.vae is not None and not self.load_vae_feat:
@@ -145,7 +145,7 @@ class PacmanDatasetSimple(IterableDataset):
                 if self.debug: print(f"[STDERR DEBUG] PacmanDatasetSimple _process_sequence: Not using VAE for frame {b_idx}", file=sys.stderr)
                 frames_list.append(self.transform(pil_img))
             if self.is_validation_run:
-                val_obs.append(self.transform(pil_img))
+                val_obs_list.append(self.transform(pil_img))
         
         frames_tensor = torch.stack(frames_list) # Shape: [L_config, C, H, W]
         C_channels = frames_tensor.shape[1]
@@ -165,8 +165,22 @@ class PacmanDatasetSimple(IterableDataset):
         # Observations ('obs'): N_obs_y_len frames, starting from stagger_offset
         # e.g., if L_config=6, N_obs_y_len=5, stagger=1: obs uses F_1, F_2, F_3, F_4, F_5
         obs_seq = frames_tensor[stagger_offset : stagger_offset + N_obs_y_len, :, :, :]
-        val_obs = val_obs[stagger_offset : stagger_offset + N_obs_y_len]
         
+        # Process val_obs_list if it's populated, otherwise create an empty tensor
+        if val_obs_list:
+            val_obs = torch.stack(val_obs_list[stagger_offset : stagger_offset + N_obs_y_len])
+        else:
+            # Create an empty tensor with the expected shape if val_obs is not used
+            # Assuming C, H, W can be inferred or are fixed for empty tensor creation
+            # For now, let's use the shape of obs_seq if it were to be created
+            # If obs_seq is empty, this might need more robust handling
+            # Let's assume C, H, W are known from self.resolution and a default C (e.g., 3 for RGB)
+            # Or, better, use the shape of frames_tensor if it's available and not empty
+            dummy_C = frames_tensor.shape[1] if frames_tensor.numel() > 0 else 3 # Fallback to 3 if frames_tensor is empty
+            dummy_H = frames_tensor.shape[2] if frames_tensor.numel() > 0 else self.resolution
+            dummy_W = frames_tensor.shape[3] if frames_tensor.numel() > 0 else self.resolution
+            val_obs = torch.empty((0, dummy_C, dummy_H, dummy_W), dtype=frames_tensor.dtype, device=frames_tensor.device)
+
         # obs_flat shape: [N_obs_y_len * C_channels, H, W]
         obs_flat = obs_seq.reshape(-1, frames_tensor.shape[2], frames_tensor.shape[3])
         if self.debug: self.logger.info(f"[PacmanDatasetSimple DEBUG] _process_sequence: obs_flat shape (before noise) = {obs_flat.shape}")
