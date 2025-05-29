@@ -145,7 +145,7 @@ class PacmanDatasetSimple(IterableDataset):
                 if self.debug: print(f"[STDERR DEBUG] PacmanDatasetSimple _process_sequence: Not using VAE for frame {b_idx}", file=sys.stderr)
                 frames_list.append(self.transform(pil_img))
             if self.is_validation_run:
-                val_obs.append(pil_img)
+                val_obs.append(self.transform(pil_img))
         
         frames_tensor = torch.stack(frames_list) # Shape: [L_config, C, H, W]
         C_channels = frames_tensor.shape[1]
