@@ -209,14 +209,14 @@ class PacmanDatasetSimple(IterableDataset):
             self.logger.info(f"[PacmanDatasetSimple DEBUG] _process_sequence: Returning img_target shape = {img_target.shape}")
             self.logger.info(f"[PacmanDatasetSimple DEBUG] _process_sequence: Returning y_target shape = {y_target.shape}")
         output = {
-        'val_obs': val_obs,
-        'obs': noisy_obs,
-        'img': img_target,
-        'y': y_target,
-        'y_mask': y_mask,
-        'data_info': data_info,
+            'val_obs': val_obs,
+            'obs': noisy_obs,
+            'img': img_target,
+            'y': y_target,
+            'y_mask': y_mask,
+            'data_info': data_info,
         }
-        self.logger.info(f"[DEBUG PacmanDatasetSimple] returning keys: {list(output.keys())}")
+        # self.logger.info(f"[DEBUG PacmanDatasetSimple] returning keys: {list(output.keys())}")
         return output
 
     def get_last_raw_validation_data(self):

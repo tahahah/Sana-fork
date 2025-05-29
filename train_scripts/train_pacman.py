@@ -998,12 +998,19 @@ def random_sample_from_iterable(dataset, batch_size=1, upper_limit=100):
     # Reshape img and obs to [b, c, h, w]
     img = img.squeeze(0)
     obs = obs.squeeze(0)
-    
+
+    # Validation observations if present
+    if 'val_obs' in samples[0]:
+        val_obs = torch.stack([s['val_obs'] for s in samples]).squeeze(0)
+    else:
+        val_obs = None
+
     return {
         'obs': obs,
         'img': img,
         'y': y,
         'y_mask': y_mask,
+        'val_obs': val_obs,
         'data_info': data_info
     }
 
