@@ -208,16 +208,16 @@ class PacmanDatasetSimple(IterableDataset):
             print(f"[STDERR DEBUG] PacmanDatasetSimple _process_sequence: noisy_obs shape = {noisy_obs.shape}", file=sys.stderr)
             self.logger.info(f"[PacmanDatasetSimple DEBUG] _process_sequence: Returning img_target shape = {img_target.shape}")
             self.logger.info(f"[PacmanDatasetSimple DEBUG] _process_sequence: Returning y_target shape = {y_target.shape}")
+        output = {
+        'val_obs': val_obs,
+        'obs': noisy_obs,
+        'img': img_target,
+        'y': y_target,
+        'y_mask': y_mask,
+        'data_info': data_info,
+        }
         self.logger.info(f"[DEBUG PacmanDatasetSimple] returning keys: {list(output.keys())}")
-
-        return {
-            'val_obs': val_obs,
-            'obs': noisy_obs,         # Expected shape: [(L_config-1)*C, H, W]
-            'img': img_target,        # Expected shape: [C, H, W]
-            'y': y_target,            # Expected shape: [1, L_config-1, ActionDim]
-            'y_mask': y_mask,         # Expected shape: [1, L_config-1]
-            'data_info': data_info,
-        }   
+        return output
 
     def get_last_raw_validation_data(self):
         """Retrieves the last stored raw data for validation logging and clears it."""
