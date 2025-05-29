@@ -208,6 +208,7 @@ class PacmanDatasetSimple(IterableDataset):
             print(f"[STDERR DEBUG] PacmanDatasetSimple _process_sequence: noisy_obs shape = {noisy_obs.shape}", file=sys.stderr)
             self.logger.info(f"[PacmanDatasetSimple DEBUG] _process_sequence: Returning img_target shape = {img_target.shape}")
             self.logger.info(f"[PacmanDatasetSimple DEBUG] _process_sequence: Returning y_target shape = {y_target.shape}")
+        self.logger.info(f"[DEBUG PacmanDatasetSimple] returning keys: {list(output.keys())}")
 
         return {
             'val_obs': val_obs,
