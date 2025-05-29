@@ -243,13 +243,14 @@ def log_validation(accelerator, config, model, logger, step, device, vae=None, i
                 # Retrieve raw frames directly from batch
                 logger.info(f"[DEBUG run_sampling] batch keys: {list(batch.keys())}")
                 raw_frames = batch['val_obs']
-                logger.info(f"[DEBUG run_sampling] batch['val_obs'] length: {len(raw_frames)}")
-                # Optionally compare with previous raw_data for confirmation
+                logger.info(f"[DEBUG run_sampling] batch['val_obs'] length: {raw_frames.shape[0]}")
+                # Retrieve raw PIL frames for accurate logging
                 raw_data = val_dataloader.dataset.get_last_raw_validation_data()
-                if raw_data and len(raw_data['raw_frames']) == len(raw_frames):
-                    logger.info("[DEBUG run_sampling] val_obs matches raw_data length.")
+                if raw_data and 'raw_frames' in raw_data:
+                    raw_frames = raw_data['raw_frames']  # list of PIL images
+                    logger.info(f"[DEBUG run_sampling] using raw_data['raw_frames'] length: {len(raw_frames)}")
                 else:
-                    logger.warning(f"[DEBUG run_sampling] val_obs ({len(raw_frames)}) != raw_data ({len(raw_data['raw_frames']) if raw_data else 'None'}). Proceeding with val_obs.")
+                    logger.warning(f"[DEBUG run_sampling] raw_data missing or mismatched; using tensor val_obs.")
                 ACTION_ID_TO_STRING = {0: "Left", 1: "Right", 2: "Up", 3: "Down", 4: "No Action"}
                 wandb_images_to_log = []
                 
@@ -259,7 +260,7 @@ def log_validation(accelerator, config, model, logger, step, device, vae=None, i
 
                 for i in range(context_frames_start_idx, num_total_raw_frames - 1):
                     pil_img = raw_frames[i]
-                    action_vec = batch['y'][0][i]
+                    action_vec = batch['y'][0, 0, i]
                     action_idx = int(torch.argmax(action_vec).item())
                     action_str = ACTION_ID_TO_STRING.get(action_idx, "Unknown")
                     
@@ -288,7 +289,7 @@ def log_validation(accelerator, config, model, logger, step, device, vae=None, i
             action_names = ['LEFT', 'RIGHT', 'UP', 'DOWN', 'NO_ACTION']
             action_seq = []
             for i in range(seq_len):
-                action_idx = actions[idx, 0, 0, 0, i].argmax().item()
+                action_idx = actions[idx, 0, 0, i].argmax().item()
                 action_seq.append(action_names[action_idx])
             action_str = ' -> '.join(action_seq)
             

@@ -208,6 +208,7 @@ class PacmanDatasetSimple(IterableDataset):
             print(f"[STDERR DEBUG] PacmanDatasetSimple _process_sequence: noisy_obs shape = {noisy_obs.shape}", file=sys.stderr)
             self.logger.info(f"[PacmanDatasetSimple DEBUG] _process_sequence: Returning img_target shape = {img_target.shape}")
             self.logger.info(f"[PacmanDatasetSimple DEBUG] _process_sequence: Returning y_target shape = {y_target.shape}")
+            # self.logger.info(f"[DEBUG PacmanDatasetSimple] returning keys: {list(output.keys())}")
         output = {
             'val_obs': val_obs,
             'obs': noisy_obs,
@@ -216,7 +217,6 @@ class PacmanDatasetSimple(IterableDataset):
             'y_mask': y_mask,
             'data_info': data_info,
         }
-        # self.logger.info(f"[DEBUG PacmanDatasetSimple] returning keys: {list(output.keys())}")
         return output
 
     def get_last_raw_validation_data(self):
