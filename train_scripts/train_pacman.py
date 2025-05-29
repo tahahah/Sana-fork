@@ -241,6 +241,7 @@ def log_validation(accelerator, config, model, logger, step, device, vae=None, i
             if accelerator.is_main_process and idx == 0: # Log for the first item in batch only, for now
                 logger.info(f"[DEBUG run_sampling] Entered detailed logging block. accelerator.is_main_process: {accelerator.is_main_process}, idx: {idx}")
                 # Retrieve raw frames directly from batch
+                logger.info(f"[DEBUG run_sampling] batch keys: {list(batch.keys())}")
                 raw_frames = batch['val_obs']
                 logger.info(f"[DEBUG run_sampling] batch['val_obs'] length: {len(raw_frames)}")
                 # Optionally compare with previous raw_data for confirmation
