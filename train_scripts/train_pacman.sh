@@ -1,7 +1,11 @@
 #/bin/bash
 set -e
 
-work_dir=output/debug
+# Ensure the repo root is importable (torchrun only puts the script dir on sys.path)
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export PYTHONPATH="$REPO_ROOT:$PYTHONPATH"
+
+work_dir=output/pacman_latent_v2
 np=1
 
 
@@ -19,7 +23,7 @@ TRITON_PRINT_AUTOTUNING=1 \
         --config_path=$config \
         --work_dir=$work_dir \
         --name=tmp \
-        --resume_from=latest \
+        --resume_from= \
         --report_to=wandb \
         --debug=true \
         "$@"

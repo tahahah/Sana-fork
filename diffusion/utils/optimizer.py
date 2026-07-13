@@ -19,10 +19,33 @@ from typing import Callable, Optional, Tuple
 
 import torch
 from came_pytorch import CAME
-from mmcv import Config
-from mmcv.runner import OPTIMIZER_BUILDERS, OPTIMIZERS, DefaultOptimizerConstructor
-from mmcv.runner import build_optimizer as mm_build_optimizer
-from mmcv.utils import _BatchNorm, _InstanceNorm
+try:
+    from mmcv import Config
+except ImportError:
+    from mmengine.config import Config
+try:
+    from mmcv.runner import OPTIMIZER_BUILDERS, OPTIMIZERS, DefaultOptimizerConstructor
+    from mmcv.runner import build_optimizer as mm_build_optimizer
+    from mmcv.utils import _BatchNorm, _InstanceNorm
+except ImportError:
+    from mmengine.registry import OPTIMIZERS
+    from mmengine.optim.optimizer.default_constructor import DefaultOptimWrapperConstructor as DefaultOptimizerConstructor
+    from torch.nn.modules.batchnorm import _BatchNorm
+    from torch.nn.modules.instancenorm import _InstanceNorm
+    # Stub registry for optimizer builders
+    from mmengine.registry import Registry
+    OPTIMIZER_BUILDERS = Registry("optimizer_builders")
+    def mm_build_optimizer(model, optimizer_cfg):
+        opt_type = optimizer_cfg.pop("type")
+        # Remove keys not understood by raw optimizer constructors
+        constructor = optimizer_cfg.pop("constructor", None)
+        paramwise_cfg = optimizer_cfg.pop("paramwise_cfg", None)
+        if opt_type == "CAMEWrapper":
+            return CAMEWrapper(model.parameters(), **optimizer_cfg)
+        elif opt_type == "Lion":
+            return Lion(model.parameters(), **optimizer_cfg)
+        else:
+            raise ValueError(f"Unknown optimizer type: {opt_type}")
 from torch.nn import GroupNorm, LayerNorm
 from torch.optim.optimizer import Optimizer
 
@@ -42,7 +65,6 @@ def auto_scale_lr(effective_bs, optimizer_cfg, rule="linear", base_batch_size=25
     return scale_ratio
 
 
-@OPTIMIZER_BUILDERS.register_module()
 class MyOptimizerConstructor(DefaultOptimizerConstructor):
     def add_params(self, params, module, prefix="", is_dcn_module=None):
         """Add all parameters of module to the params list.
@@ -180,7 +202,7 @@ def build_optimizer(model, optimizer_cfg):
     return optimizer
 
 
-@OPTIMIZERS.register_module()
+@OPTIMIZERS.register_module(force=True)
 class Lion(Optimizer):
     def __init__(
         self,
@@ -242,7 +264,7 @@ class Lion(Optimizer):
         return loss
 
 
-@OPTIMIZERS.register_module()
+@OPTIMIZERS.register_module(force=True)
 class CAMEWrapper(CAME):
     def __init__(self, *args, **kwargs):
 

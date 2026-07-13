@@ -36,10 +36,13 @@ def build_lr_scheduler(config, optimizer, train_dataloader, lr_scale_ratio):
         + "."
     )
     if config.lr_schedule == "cosine":
+        # Use num_training_steps from config if provided, otherwise compute from dataloader
+        cosine_args = dict(config.lr_schedule_args)
+        if "num_training_steps" not in cosine_args:
+            cosine_args["num_training_steps"] = len(train_dataloader) * config.num_epochs
         lr_scheduler = get_cosine_schedule_with_warmup(
             optimizer=optimizer,
-            **config.lr_schedule_args,
-            num_training_steps=(len(train_dataloader) * config.num_epochs),
+            **cosine_args,
         )
     elif config.lr_schedule == "constant":
         lr_scheduler = get_constant_schedule_with_warmup(

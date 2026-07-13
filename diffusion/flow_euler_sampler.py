@@ -49,11 +49,16 @@ class FlowEuler:
             # broadcast to batch dimension in a way that's compatible with ONNX/Core ML
             timestep = t.expand(latent_model_input.shape[0])
 
+            # Double obs_latent for CFG to match doubled latent
+            kwargs_copy = self.model_kwargs.copy()
+            if 'obs_latent' in kwargs_copy and do_classifier_free_guidance:
+                kwargs_copy['obs_latent'] = torch.cat([kwargs_copy['obs_latent']] * 2)
+
             noise_pred = self.model(
                 latent_model_input,
                 timestep,
                 prompt_embeds,
-                **self.model_kwargs,
+                **kwargs_copy,
             )
 
             if isinstance(noise_pred, Transformer2DModelOutput):

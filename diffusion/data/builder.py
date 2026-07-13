@@ -17,7 +17,10 @@
 import os
 import time
 
-from mmcv import Registry, build_from_cfg
+try:
+    from mmcv import Registry, build_from_cfg
+except ImportError:
+    from mmengine import Registry, build_from_cfg
 from termcolor import colored
 from torch.utils.data import DataLoader
 
@@ -73,12 +76,15 @@ def build_dataset(cfg, resolution=224, **kwargs):
 
 
 def build_dataloader(dataset, batch_size=256, num_workers=4, shuffle=True, **kwargs):
+    persistent = num_workers > 0
     if "batch_sampler" in kwargs:
         dataloader = DataLoader(
-            dataset, batch_sampler=kwargs["batch_sampler"], num_workers=num_workers, pin_memory=True
+            dataset, batch_sampler=kwargs["batch_sampler"], num_workers=num_workers, pin_memory=True,
+            persistent_workers=persistent,
         )
     else:
         dataloader = DataLoader(
-            dataset, batch_size=batch_size, shuffle=shuffle, num_workers=num_workers, pin_memory=True, **kwargs
+            dataset, batch_size=batch_size, shuffle=shuffle, num_workers=num_workers, pin_memory=True,
+            persistent_workers=persistent, **kwargs
         )
     return dataloader

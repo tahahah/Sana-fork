@@ -23,7 +23,10 @@ from datetime import datetime
 import numpy as np
 import pytz
 import torch.distributed as dist
-from mmcv.utils.logging import logger_initialized
+try:
+    from mmcv.utils.logging import logger_initialized
+except ImportError:
+    logger_initialized = {}
 from termcolor import colored
 
 from .dist_utils import is_local_master
