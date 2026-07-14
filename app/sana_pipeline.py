@@ -126,7 +126,12 @@ class SanaPipeline(nn.Module):
             ]
 
     def build_vae(self, config):
-        vae = get_vae(config.vae_type, config.vae_pretrained, self.device).to(self.weight_dtype)
+        vae = get_vae(
+            config.vae_type,
+            config.vae_pretrained,
+            self.device,
+            finetuned_decoder=getattr(config, "finetuned_decoder", None),
+        ).to(self.weight_dtype)
         return vae
 
     def build_text_encoder(self, config):

@@ -160,6 +160,12 @@ def load_checkpoint_into_model(model, checkpoint_path, config, device):
         if key in state_dict:
             del state_dict[key]
 
+    # Drop VAE weights baked into the checkpoint — the VAE (incl. the fine-tuned
+    # decoder) is loaded separately via get_vae; otherwise these stock weights
+    # overwrite the fine-tuned decoder on load (blobby output).
+    for k in [k for k in state_dict if k.startswith("vae.")]:
+        del state_dict[k]
+
     # Load null_embed if available
     null_embed_root = config.train.null_embed_root
     latent_size = config.model.image_size // config.vae.vae_downsample_rate
