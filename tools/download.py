@@ -39,7 +39,9 @@ def find_model(model_name):
     model_name = hf_download_or_fpath(model_name)
     assert os.path.isfile(model_name), f"Could not find Sana checkpoint at {model_name}"
     print(colored(f"[Sana] Loading model from {model_name}", attrs=["bold"]))
-    return torch.load(model_name, map_location=lambda storage, loc: storage)
+    # weights_only=False: our checkpoints embed rng_state/optimizer/scheduler
+    # (non-tensor objects). Trusted local file. PyTorch 2.6 flipped this default.
+    return torch.load(model_name, map_location=lambda storage, loc: storage, weights_only=False)
 
 
 def download_model(model_name):

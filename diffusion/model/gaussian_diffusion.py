@@ -850,9 +850,6 @@ class GaussianDiffusion:
                     terms["mae"] = model_kwargs["mask_loss_coef"] * mean_flat(loss * mask) * mask.shape[1] / mask.sum(1)
             else:
                 terms["mse"] = mean_flat(loss)
-                # Add timestep-dependent weighting for finer details
-                t_weights = 1.0 + (1.0 / (t.float() + 1.0))  # Higher weights for lower timesteps
-                terms["mse"] = terms["mse"] * t_weights
             if "vb" in terms:
                 terms["loss"] = terms["mse"] + terms["vb"]
             else:
@@ -951,9 +948,6 @@ class GaussianDiffusion:
                 output = th.where(t > 249, pred_noise, pred_startx)
             loss = (target - output) ** 2
             terms["mse"] = mean_flat(loss)
-            # Add timestep-dependent weighting for finer details
-            t_weights = 1.0 + (1.0 / (t.float() + 1.0))  # Higher weights for lower timesteps
-            terms["mse"] = terms["mse"] * t_weights
             if "vb" in terms:
                 terms["loss"] = terms["mse"] + terms["vb"]
             else:

@@ -15,6 +15,7 @@ wandb/
 private/
 ldm_ae*
 data/*
+datasets/
 *.pth
 .gradio/
 

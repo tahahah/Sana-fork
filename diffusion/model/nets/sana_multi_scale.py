@@ -180,6 +180,7 @@ class SanaMS(Sana):
         input_size=32,
         patch_size=2,
         in_channels=4,
+        out_channels=None,
         hidden_size=1152,
         depth=28,
         num_heads=16,
@@ -209,6 +210,7 @@ class SanaMS(Sana):
             input_size=input_size,
             patch_size=patch_size,
             in_channels=in_channels,
+            out_channels=out_channels,
             hidden_size=hidden_size,
             depth=depth,
             num_heads=num_heads,
@@ -317,11 +319,10 @@ class SanaMS(Sana):
                 y_lens = mask.sum(dim=1).tolist()
             else:
                 y_lens = mask
-        elif _xformers_available:
+        else:
+            # No xformers and no mask: reshape y for cross-attention fallback
             y_lens = [y.shape[2]] * y.shape[0]
             y = y.squeeze(1).view(1, -1, x.shape[-1])
-        else:
-            raise ValueError(f"Attention type is not available due to _xformers_available={_xformers_available}.")
 
         for block in self.blocks:
             x = auto_grad_checkpoint(

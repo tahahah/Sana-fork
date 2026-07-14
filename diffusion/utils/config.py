@@ -70,6 +70,7 @@ class ModelConfig(BaseConfig):
     mlp_acts: List[Optional[str]] = field(default_factory=lambda: ["silu", "silu", None])
     mlp_ratio: float = 2.5
     use_pe: bool = False
+    torch_compile: bool = False  # Enable torch.compile for kernel fusion
     qk_norm: bool = False
     class_dropout_prob: float = 0.0
     linear_head_dim: int = 32
@@ -89,6 +90,7 @@ class AEConfig(BaseConfig):
     vae_latent_dim: int = 32
     vae_downsample_rate: int = 32
     sample_posterior: bool = True
+    finetuned_decoder: Optional[str] = None  # path to a fine-tuned decoder state_dict (loaded into TAESD if set)
     extra: Any = None
 
 
@@ -120,6 +122,7 @@ class SchedulerConfig(BaseConfig):
     pred_sigma: bool = False
     learn_sigma: bool = True
     vis_sampler: str = "flow_dpm-solver"
+    vis_sampler_steps: int = 40  # sampling steps used for validation/inference visualization
     flow_shift: float = 1.0
     # logit-normal timestep
     weighting_scheme: Optional[str] = "logit_normal"
