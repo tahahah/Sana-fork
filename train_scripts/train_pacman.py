@@ -32,6 +32,9 @@ import itertools
 import numpy as np
 import pyrallis
 import torch
+# Enable TF32 for fp32 matmuls and cuDNN autotuner
+torch.set_float32_matmul_precision("high")  # TF32 on Ampere+
+torch.backends.cudnn.benchmark = True
 from accelerate import Accelerator, InitProcessGroupKwargs
 from accelerate.utils import DistributedType
 from PIL import Image
@@ -78,7 +81,8 @@ def log_validation(accelerator, config, model, logger, step, device, vae=None, i
             batch_size=config.train.train_batch_size,
             shuffle=False,
             num_workers=config.train.num_workers,
-            pin_memory=True
+            pin_memory=True,
+            persistent_workers=config.train.num_workers > 0,
         )
         val_iterator = iter(val_dataloader)
     
@@ -99,11 +103,8 @@ def log_validation(accelerator, config, model, logger, step, device, vae=None, i
     
     # Create null action tensors for classifier-free guidance
     seq_len = config.data.sequence_length
-    null_action = torch.zeros(batch_size, 1, seq_len-1, 5, device=device)  # 5 is number of actions
-    null_action_mask = torch.ones(batch_size, seq_len-1, device=device)
-
-    null_action = null_action.unsqueeze(1)
-    null_action_mask = null_action_mask.unsqueeze(1)
+    null_action = torch.zeros(batch_size, 1, seq_len-1, 5, device=device)  # [B, 1, seq_len-1, 5]
+    null_action_mask = torch.ones(batch_size, 1, seq_len-1, device=device)
     
     print(f"Created tensors:")
     print(f"- hw shape: {hw.shape}")
@@ -123,52 +124,49 @@ def log_validation(accelerator, config, model, logger, step, device, vae=None, i
     def run_sampling(init_z=None, label_suffix="", vae=None, sampler="dpm-solver"):
         latents = []
         current_image_logs = []
-        
-        # Get a batch of validation samples from the dataset
-        img = batch['img'].to(device)  # [B, C, H, W]
-        obs = batch['obs'].to(device) # [B, S*C, H, W]
-        actions = batch['y'].to(device)  # [B, S, A]
-        action_masks = batch['y_mask'].to(device)  # [B, S]
-        
-        print(f"Debug shapes:")
-        print(f"- img shape: {img.shape}")
-        print(f"- obs shape: {obs.shape}")
-        print(f"- actions shape before: {actions.shape}")
-        print(f"- null_action shape: {null_action.shape}")
-        
-        # Reshape actions to match model expectations [B, 1, S, A]
-        actions = actions.unsqueeze(1)  # Add the extra dimension
-        
-        print(f"- actions shape after: {actions.shape}")
-        
-        batch_size = img.shape[0]
-        seq_len = img.shape[1] # seq_len*32
-        
-        # Generate initial noise if not provided
-        z = init_z if init_z is not None else torch.randn_like(img)
-        # encoded z = torch.randn([1, vae.cfg.latent_channels, img.shape[-2]//vae.cfg.latent_channels, img.shape[-1]//vae.cfg.latent_channels], device=device)
-        print(f"Debug - initial z shape: {z.shape}")
-        
-        # Base model kwargs for the shape info and observations
+
+        # Get a batch of validation samples from the dataset (precomputed latents)
+        obs_latents = batch['obs_latent'].to(device)  # [B, 4*(seq_len-1), 32, 32]
+        actions = batch['y'].to(device)  # [B, 1, seq_len-1, 5] — already correct shape
+        action_masks = batch['y_mask'].to(device)  # [B, 1, seq_len-1]
+
+        batch_size = obs_latents.shape[0]
+        seq_len = config.data.sequence_length
+
+        # Merge obs latents through the history encoder (once). No runtime VAE.
+        with torch.no_grad():
+            model_dtype = model.module.dtype if hasattr(model, 'module') else next(model.parameters()).dtype
+            obs_latent_in = obs_latents.to(model_dtype)
+            obs_latent = model.module.encode_obs(obs_latent_in) if hasattr(model, 'module') else model.encode_obs(obs_latent_in)
+
+        # Latent dimensions
+        latent_channels = config.vae.vae_latent_dim  # 4
+        latent_size = config.model.image_size // config.vae.vae_downsample_rate  # 256 // 32 = 8
+
+        # Generate initial latent noise
+        z = init_z if init_z is not None else torch.randn(batch_size, latent_channels, latent_size, latent_size, device=device)
+        print(f"Debug - initial z shape: {z.shape} (latent space)")
+
+        # Model kwargs: pass precomputed obs_latent, not raw obs
         model_kwargs = dict(
             data_info={"img_hw": hw, "aspect_ratio": ar},
-            mask=None,  # Use mask directly from dataset
-            obs=obs,  # Pass observations to be concatenated with noise in the model
+            mask=None,
+            obs_latent=obs_latent,
         )
 
         if sampler == "dpm-solver":
             dpm_solver = DPMS(
-                model.sana.forward_with_dpmsolver,
-                condition=actions,  # Use actions as condition
-                uncondition=null_action,  # Use null action as uncondition
-                cfg_scale=4.5,  # Same scale as original code
+                model.forward_with_dpmsolver,
+                condition=actions,
+                uncondition=null_action,
+                cfg_scale=4.5,
                 model_kwargs=model_kwargs,
                 model_type="flow",
                 schedule="FLOW",
             )
             denoised = dpm_solver.sample(
                 z,
-                steps=40,
+                steps=config.scheduler.vis_sampler_steps,
                 order=2,
                 skip_type="time_uniform_flow",
                 method="multistep",
@@ -177,30 +175,30 @@ def log_validation(accelerator, config, model, logger, step, device, vae=None, i
             print(f"Debug - denoised shape after dpm_solver: {denoised.shape if denoised is not None else None}")
         elif sampler == "flow_euler":
             flow_solver = FlowEuler(
-                model, 
-                condition=actions,  # Use actions as condition
-                uncondition=null_action,  # Use null action as uncondition
-                cfg_scale=4.5,  # Same scale as original code
+                model,
+                condition=actions,
+                uncondition=null_action,
+                cfg_scale=4.5,
                 model_kwargs=model_kwargs
             )
             denoised = flow_solver.sample(
                 z,
-                steps=28
+                steps=config.scheduler.vis_sampler_steps
             )
             print(f"Debug - denoised shape after flow_euler: {denoised.shape if denoised is not None else None}")
         elif sampler == "flow_dpm-solver":
             dpm_solver = DPMS(
                 model.forward_with_dpmsolver,
-                condition=actions,  # Use actions as condition
-                uncondition=null_action,  # Use null action as uncondition
-                cfg_scale=4.5,  # Same scale as original code
+                condition=actions,
+                uncondition=null_action,
+                cfg_scale=4.5,
                 model_type="flow",
                 model_kwargs=model_kwargs,
                 schedule="FLOW",
             )
             denoised = dpm_solver.sample(
                 z,
-                steps=40,
+                steps=config.scheduler.vis_sampler_steps,
                 order=2,
                 skip_type="time_uniform_flow",
                 method="multistep",
@@ -211,34 +209,33 @@ def log_validation(accelerator, config, model, logger, step, device, vae=None, i
             raise ValueError(f"{sampler} not implemented")
 
         latents.append(denoised)
-        
+
         torch.cuda.empty_cache()
-        
-        for latent in latents:
+
+        for idx, latent in enumerate(latents):
             print(f"Debug - latent: {latent.shape if latent is not None else None}")
-            print(f"Debug - vae: {type(vae)}")
-            if vae is not None:
-                print(f"Debug - vae.cfg: {vae.cfg if hasattr(vae, 'cfg') else None}")
-            
-            latent = latent.to(torch.float16)
-            # samples = vae_decode(config.vae.vae_type, vae, latent)
+
+            # VAE decode latent to pixel image (once, after sampling)
+            with torch.no_grad():
+                pixel_image = vae.decoder(latent.float())  # [B, 3, 256, 256] in [0,1]
+
             samples = (
-                torch.clamp(127.5 * latent + 128.0, 0, 255)
+                torch.clamp(255 * pixel_image, 0, 255)
                 .permute(0, 2, 3, 1)
                 .to("cpu", dtype=torch.uint8)
                 .numpy()[0]
             )
             print(f"Debug - samples shape: {samples.shape}")
             image = Image.fromarray(samples)
-            
+
             # Convert actions to readable format for logging
             action_names = ['LEFT', 'RIGHT', 'UP', 'DOWN', 'NO_ACTION']
             action_seq = []
-            for i in range(seq_len):
-                action_idx = actions[0, 0, 0, i].argmax().item()
+            for i in range(seq_len - 1):
+                action_idx = actions[idx, 0, 0, i].argmax().item()
                 action_seq.append(action_names[action_idx])
             action_str = ' -> '.join(action_seq)
-            
+
             current_image_logs.append({
                 "validation_actions": action_str + label_suffix,
                 "images": [image]
@@ -308,15 +305,16 @@ def log_validation(accelerator, config, model, logger, step, device, vae=None, i
         local_vis_save_path = osp.join(config.work_dir, "log_vis")
         os.umask(0o000)
         os.makedirs(local_vis_save_path, exist_ok=True)
-        concatenated_image = concatenate_images(image_logs, images_per_row=5, image_format=file_format)
+        # images_per_row = number of real samples, so the grid has no black padding
+        concatenated_image = concatenate_images(image_logs, images_per_row=max(1, len(image_logs)), image_format=file_format)
         save_path = (
             osp.join(local_vis_save_path, f"vis_{step}.{file_format}")
             if init_noise is None
             else osp.join(local_vis_save_path, f"vis_{step}_w_init.{file_format}")
         )
         concatenated_image.save(save_path)
-
-    del vae
+    if vae:
+        del vae
     torch.cuda.empty_cache()
     flush()
     return image_logs
@@ -396,9 +394,8 @@ def train(config, args, accelerator, model, optimizer, lr_scheduler, train_datal
             vae_time_all = 0
             data_time_start = time.time()
 
-            # Get next batch
-            clean_images = batch['img'].to(accelerator.device)  # Already VAE encoded by dataset
-            obs = batch['obs'].to(accelerator.device)
+            # Get next batch — obs is precomputed latents (no pixels, no runtime VAE)
+            obs_latents = batch['obs_latent'].to(accelerator.device)  # [B, 4*(seq_len-1), 32, 32]
             data_info = batch['data_info']
 
             # Get action conditioning
@@ -409,12 +406,27 @@ def train(config, args, accelerator, model, optimizer, lr_scheduler, train_datal
             accelerator.wait_for_everyone()
             model_time_start = time.time()
             with accelerator.accumulate(model):
-                # Predict the noise residual
-                optimizer.zero_grad()
+                optimizer.zero_grad(set_to_none=True)
+
+                # Get clean latent: precomputed or VAE-encode on the fly
+                if 'img_latent' in batch and batch['img_latent'] is not None:
+                    clean_latent = batch['img_latent'].to(accelerator.device)  # [B, 4, 32, 32] precomputed
+                else:
+                    clean_images = batch['img'].to(accelerator.device)  # [B, 3, 256, 256] in [0,1]
+                    with torch.no_grad():
+                        clean_latent = vae.encoder(clean_images.float())  # [B, 4, 32, 32]
+
+                # Merge precomputed obs latents through the history encoder
+                # (WITH grad — the history encoder is trainable). No runtime VAE.
+                model_dtype = model.module.dtype if hasattr(model, 'module') else next(model.parameters()).dtype
+                obs_latent_in = obs_latents.to(model_dtype)
+                obs_latent = model.module.encode_obs(obs_latent_in) if hasattr(model, 'module') else model.encode_obs(obs_latent_in)
+
+                # Diffusion in latent space
                 loss_term = train_diffusion.training_losses(
-                    model, clean_images, torch.randint(0, config.scheduler.train_sampling_steps, (clean_images.shape[0],), device=clean_images.device).long(), 
-                    model_kwargs=dict(y=y, mask=y_mask, data_info=data_info, obs=obs)
-            )
+                    model, clean_latent, torch.randint(0, config.scheduler.train_sampling_steps, (clean_latent.shape[0],), device=clean_latent.device).long(),
+                    model_kwargs=dict(y=y, mask=y_mask, data_info=data_info, obs_latent=obs_latent)
+                )
                 loss = loss_term["loss"].mean()
             accelerator.backward(loss)
             if accelerator.sync_gradients:
@@ -445,9 +457,11 @@ def train(config, args, accelerator, model, optimizer, lr_scheduler, train_datal
                     current_step = step + 1
                     eta_epoch = str(datetime.timedelta(seconds=int(avg_time * (train_dataloader_len - step - 1))))
                 else:
-                    current_step = (global_step - sampler.step_start // config.train.train_batch_size) % train_dataloader_len
+                    _sampler = train_dataloader.sampler if hasattr(train_dataloader, 'sampler') else None
+                    _step_start = getattr(_sampler, 'step_start', 0) if _sampler else 0
+                    current_step = (global_step - _step_start // config.train.train_batch_size) % train_dataloader_len
                     current_step = train_dataloader_len if current_step == 0 else current_step
-                    eta_epoch = str(datetime.timedelta(seconds=int(avg_time * (train_dataloader_len - sampler.step_start // config.train.train_batch_size - step - 1))))
+                    eta_epoch = str(datetime.timedelta(seconds=int(avg_time * (train_dataloader_len - _step_start // config.train.train_batch_size - step - 1))))
 
                 log_buffer.average()
 
@@ -459,7 +473,7 @@ def train(config, args, accelerator, model, optimizer, lr_scheduler, train_datal
                 info += (
                     f"s:({model.module.sana.h}, {model.module.sana.w}), "
                     if hasattr(model, "module")
-                    else f"s:({model.h}, {model.w}), "
+                    else f"s:({model.sana.h}, {model.sana.w}), "
                 )
 
                 info += ", ".join([f"{k}:{v:.4f}" for k, v in log_buffer.output.items()])
@@ -483,8 +497,18 @@ def train(config, args, accelerator, model, optimizer, lr_scheduler, train_datal
                 accelerator.wait_for_everyone()
                 if accelerator.is_main_process:
                     os.umask(0o000)
+                    checkpoint_folder = osp.join(config.work_dir, "checkpoints")
+                    folder_size = 0
+                    for dirpath, _, filenames in os.walk(checkpoint_folder):
+                        for filename in filenames:
+                            fp = osp.join(dirpath, filename)
+                            if osp.exists(fp):  # skip dangling symlinks (e.g. latest.pth)
+                                folder_size += osp.getsize(fp)
+                    if folder_size > 5 * 1024 * 1024 * 1024:  # 5GB in bytes
+                        logger.info(f"Stopping training at epoch {epoch}, step {global_step} due to checkpoint folder size exceeding 5GB.")
+                        return
                     ckpt_saved_path = save_checkpoint(
-                        osp.join(config.work_dir, "checkpoints"),
+                        checkpoint_folder,
                         epoch=epoch,
                         step=global_step,
                         model=accelerator.unwrap_model(model),
@@ -533,7 +557,7 @@ def train(config, args, accelerator, model, optimizer, lr_scheduler, train_datal
             # for internal, refactor dataloader logic to remove the ad-hoc implementation
             if (
                 config.model.multi_scale
-                and (train_dataloader_len - sampler.step_start // config.train.train_batch_size - step) < 30
+                and (train_dataloader_len - getattr(getattr(train_dataloader, 'sampler', None), 'step_start', 0) // config.train.train_batch_size - step) < 30
             ):
                 global_step = epoch * train_dataloader_len
                 logger.info("Early stop current iteration")
@@ -580,12 +604,9 @@ def main(cfg: SanaConfig) -> None:
     load_from = True
     if args.resume_from or config.model.resume_from:
         load_from = False
-        config.model.resume_from = dict(
-            checkpoint=args.resume_from or config.model.resume_from,
-            load_ema=False,
-            resume_optimizer=True,
-            resume_lr_scheduler=True,
-        )
+        # Preserve YAML resume_from settings; only override checkpoint if provided via CLI
+        if args.resume_from and isinstance(args.resume_from, str):
+            config.model.resume_from["checkpoint"] = args.resume_from
 
     # if args.debug:
     #     config.train.log_interval = 1
@@ -648,12 +669,14 @@ def main(cfg: SanaConfig) -> None:
     learn_sigma = getattr(config.scheduler, "learn_sigma", True) and pred_sigma
     vae = None
     validation_noise = (
-        torch.randn(config.train.train_batch_size, 3, image_size, image_size, device="cpu", generator=generator)
+        torch.randn(config.train.train_batch_size, config.vae.vae_latent_dim, latent_size, latent_size, device="cpu", generator=generator)
         if getattr(config.train, "deterministic_validation", False)
         else None
     )
-    if not config.data.load_vae_feat:
-        vae = get_vae(config.vae.vae_type, config.vae.vae_pretrained, accelerator.device).to(torch.float16)
+    # Load VAE for the decoder only (validation visualization). Obs and target
+    # are fully precomputed latents, so no VAE encode happens during training.
+    vae = get_vae(config.vae.vae_type, config.vae.vae_pretrained, accelerator.device,
+                  finetuned_decoder=getattr(config.vae, "finetuned_decoder", None)).to(torch.float32)
     logger.info(f"vae type: {config.vae.vae_type}")
 
     os.makedirs(config.train.null_embed_root, exist_ok=True)
@@ -694,7 +717,7 @@ def main(cfg: SanaConfig) -> None:
         "mlp_ratio": config.model.mlp_ratio,
         "mlp_acts": list(config.model.mlp_acts),
         "in_channels": config.model.in_channels,
-        "y_norm_scale_factor": 0.01,
+        "y_norm_scale_factor": 1.0,
         "use_pe": config.model.use_pe,
         "linear_head_dim": config.model.linear_head_dim,
         "pred_sigma": pred_sigma,
@@ -703,6 +726,7 @@ def main(cfg: SanaConfig) -> None:
         "model_max_length": config.data.sequence_length-1,
         "seq_length": config.data.sequence_length,
         "vae": vae,
+        "accelerator": accelerator
     }
     model = build_model(
         config.model.model,
@@ -902,6 +926,12 @@ def main(cfg: SanaConfig) -> None:
     # objects in the same order you gave them to the prepare method.
     model = accelerator.prepare(model)
     optimizer, lr_scheduler = accelerator.prepare(optimizer, lr_scheduler)
+    # torch.compile for kernel fusion and reduced dispatch overhead
+    if getattr(config.model, "torch_compile", False):
+        logger.info("Compiling model with torch.compile (mode='default')...")
+        # Use default mode for safety — max-autotune with CUDA graphs may fail with validation
+        model = torch.compile(model, mode="default", dynamic=True)
+        logger.info("Model compiled.")
 
     # Start Training
     train(
@@ -930,19 +960,19 @@ def random_sample_from_iterable(dataset, batch_size=1, upper_limit=100):
         sample = next(itertools.islice(dataset, skip, None))
         samples.append(sample)
     
-    obs = torch.stack([s['obs'] for s in samples])
-    img = torch.stack([s['img'] for s in samples])
+    obs_latent = torch.stack([s['obs_latent'] for s in samples])
+    img_latent = torch.stack([s['img_latent'] for s in samples])
     y = torch.cat([s['y'] for s in samples])
     y_mask = torch.cat([s['y_mask'] for s in samples])
     data_info = [s['data_info'] for s in samples]
-    
-    # Reshape img and obs to [b, c, h, w]
-    img = img.squeeze(0)
-    obs = obs.squeeze(0)
-    
+
+    # Collapse the leading singleton (each sample is already a collated batch)
+    obs_latent = obs_latent.squeeze(0)
+    img_latent = img_latent.squeeze(0)
+
     return {
-        'obs': obs,
-        'img': img,
+        'obs_latent': obs_latent,
+        'img_latent': img_latent,
         'y': y,
         'y_mask': y_mask,
         'data_info': data_info

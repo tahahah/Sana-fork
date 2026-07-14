@@ -1,18 +1,30 @@
 import torch
 import torch.nn as nn
 from diffusion.model.builder import MODELS
-from diffusion.model.nets.history_encoder import build_history_encoder
+from diffusion.model.nets.history_encoder3d import build_history_encoder
 from diffusion.model.nets.sana_multi_scale import SanaMS
-from diffusion.model.builder import vae_encode, vae_decode
 
 
 class PacmanDiffusionModel(nn.Module):
-    """Wrapper class that combines HistoryEncoder with SanaMS for Pacman diffusion model."""
-    
+    """Latent diffusion model for Pacman frame generation.
+
+    Architecture (fully-precomputed latent diffusion — no VAE at runtime):
+    - Target frames are precomputed to TAESD latents [B, 4, 32, 32] offline
+    - Observation frames are ALSO precomputed to per-frame latents offline
+    - history_encoder merges the obs latents → single obs_latent [B, 4, 32, 32]
+    - Noise is added in latent space
+    - SanaMS operates on concatenated [x_t, obs_latent] → [B, 8, 32, 32]
+    - SanaMS predicts velocity in latent space [B, 4, 32, 32]
+    - VAE decodes the final denoised latent to a pixel image only at validation
+
+    The history_encoder now works entirely in latent space, so no VAE encode
+    happens inside the training/sampling loop.
+    """
+
     def __init__(
         self,
-        input_size=32,
-        in_channels=160,
+        input_size=8,
+        in_channels=4,
         patch_size=1,
         hidden_size=128,
         depth=12,
@@ -34,32 +46,34 @@ class PacmanDiffusionModel(nn.Module):
         mlp_acts=("silu", "silu", None),
         linear_head_dim=32,
         cross_norm=False,
-        vae=None,  
-        seq_length=32,  
+        vae=None,
+        seq_length=2,
         **kwargs
     ):
         super().__init__()
-        
-        # Store VAE model
+
+        self.seq_length = seq_length
+        # VAE is NOT stored in the model anymore — encode/decode happens outside
+        # But keep a reference for convenience (not registered as submodule)
         self.vae = vae
         if self.vae is not None:
-            # Freeze VAE parameters
             for param in self.vae.parameters():
                 param.requires_grad = False
-        self.seq_length = seq_length
-        
-        # Create history encoder to process raw image frames
+
+        # History encoder merges precomputed obs latents (4ch each) → [B, 4, h, w]
         self.history_encoder = build_history_encoder(
-            in_channels=3 * seq_length,  
-            out_channels=3,  
-            hidden_dim=3 * seq_length // 2  
+            in_channels=4,
+            seq_length=seq_length - 1,
+            hidden_dim=12
         )
-        
-        # Create Sana model for diffusion with latent input channels from VAE
+
+        # SanaMS: input = concat([x_t (4ch), obs_latent (4ch)]) = 8 channels
+        # Output = velocity for x_t only = 4 channels
         self.sana = SanaMS(
             input_size=input_size,
             patch_size=patch_size,
-            in_channels=32,  
+            in_channels=8,        # x_t (4) + obs_latent (4) concatenated
+            out_channels=4,       # predict velocity for x_t only
             hidden_size=hidden_size,
             depth=depth,
             num_heads=num_heads,
@@ -82,73 +96,73 @@ class PacmanDiffusionModel(nn.Module):
             cross_norm=cross_norm,
             **kwargs
         )
-    
-    def encode_history(self, x, obs):
-        """Encode the history before adding noise.
-        
+
+        # Residual (temporal) skip: project the clean observation latent directly
+        # to the output so the transformer only has to learn the *change* between
+        # frames instead of regenerating the (mostly static) maze every step.
+        # Zero-initialized, so at step 0 the model is identical to the no-skip
+        # baseline; the model then learns how much of the previous frame to copy
+        # straight through, letting crisp static structure bypass the transformer.
+        self.obs_residual = nn.Conv2d(4, 4, kernel_size=1)
+        nn.init.zeros_(self.obs_residual.weight)
+        nn.init.zeros_(self.obs_residual.bias)
+
+    def encode_obs(self, obs_latents):
+        """Merge precomputed observation latents through the history encoder.
+
         Args:
-            x: Input tensor [B, C, H, W]
-            obs: Observation tensor to concatenate with x
+            obs_latents: [B, 4*(seq_length-1), h, w] precomputed obs latents,
+                per-frame latents concatenated along channels
         Returns:
-            Encoded tensor with same batch and spatial dimensions as x
+            obs_latent: [B, 4, h, w] merged conditioning latent (raw)
         """
-        combined = torch.cat([x, obs], dim=1)
-        return self.history_encoder(combined)
-    
-    def forward_with_dpmsolver(self, x, timestep, y, data_info, obs=None, **kwargs):
+        return self.history_encoder(obs_latents)
+
+    def forward_with_dpmsolver(self, x, timestep, y, data_info, obs_latent=None, **kwargs):
+        """DPM-Solver interface. obs_latent is precomputed by the caller.
+
+        Args:
+            x: noisy latent [B, 4, 8, 8]
+            timestep: diffusion timestep
+            y: action conditioning
+            data_info: dict with img_hw, aspect_ratio
+            obs_latent: precomputed obs latent [B, 4, 8, 8]
         """
-        dpm solver donnot need variance prediction
-        """
-        # https://github.com/openai/glide-text2im/blob/main/notebooks/text2im.ipynb
-        
-        model_out = self.forward(x, timestep, y, data_info=data_info, obs=obs, **kwargs)
+        model_out = self.forward(x, timestep, y, data_info=data_info, obs_latent=obs_latent, **kwargs)
         return model_out.chunk(2, dim=1)[0] if self.sana.pred_sigma else model_out
 
-    def forward(self, x, timestep, y, mask=None, data_info=None, obs=None, **kwargs):
-        """
-        Forward pass through both history encoder and Sana model.
-        
+    def forward(self, x, timestep, y, mask=None, data_info=None, obs_latent=None, **kwargs):
+        """Forward pass in latent space.
+
         Args:
-            x: Tensor of shape [batch_size, 3, height, width] - Noisy input frame x_t in pixel space
-            timestep: Tensor of diffusion timesteps
-            y: Conditioning tensor
-            mask: Optional attention mask 
-            data_info: Optional data info dict
-            obs: Tensor of shape [batch_size, 3*(seq_length-1), height, width] - Raw observation frames
-            **kwargs: Additional arguments
+            x: noisy latent [B, 4, 8, 8]
+            timestep: diffusion timesteps
+            y: action conditioning [B, 1, 1, 5]
+            mask: optional attention mask
+            data_info: dict with img_hw, aspect_ratio
+            obs_latent: precomputed clean obs latent [B, 4, 8, 8]
         Returns:
-            Model output in pixel space
+            velocity prediction [B, 4, 8, 8]
         """
-        if obs is None:
-            raise ValueError("obs must be provided for history encoding")
-        
-        
-        # print(f"- x shape: {x.shape}")
-        # print(f"- obs shape: {obs.shape}")
-        # 1. Concatenate noisy frame with observation frames in pixel space
-        concat_input = torch.cat([obs, x], dim=1)  # [b, 3*seq_length, h, w]
-        
-        # 2. Process through history encoder to get single frame
-        processed = self.history_encoder(concat_input)  # [b, 3, h, w]
-        
-        # 3. Encode through VAE to get latents, allowing gradients to flow
-        if self.vae is not None:
-            with torch.set_grad_enabled(True):  # Ensure gradients flow through VAE
-                encoded = self.vae.encode(processed)
-                latent_output = self.sana(encoded, timestep, y, mask=mask, data_info=data_info, **kwargs)
-                pixel_output = self.vae.decode(latent_output)
-            return pixel_output
+        if obs_latent is None:
+            raise ValueError("obs_latent must be provided for latent diffusion")
+
+        # Concatenate noisy latent with obs latent along channels
+        sana_input = torch.cat([x, obs_latent], dim=1)  # [B, 8, 8, 8]
+
+        # Sana predicts velocity in latent space
+        model_out = self.sana(sana_input, timestep, y, mask=mask, data_info=data_info, **kwargs)
+
+        # Residual temporal skip: add a zero-initialized projection of the clean
+        # obs latent to the velocity channels. The loss/parametrization is
+        # unchanged (output is still compared to the velocity target); this just
+        # gives the output a direct path to the spatially-aligned previous frame
+        # so it can reuse static structure instead of regenerating it.
+        residual = self.obs_residual(obs_latent)
+        c = residual.shape[1]
+        if model_out.shape[1] == c:
+            model_out = model_out + residual
         else:
-            raise ValueError("VAE model must be provided")
-
-
-# @MODELS.register_module()
-# def SanaMS_PACMAN_P1_D12(**kwargs):
-#     """Factory function for PacmanDiffusionModel following Sana naming convention."""
-#     return PacmanDiffusionModel(
-#         depth=12,
-#         hidden_size=128,
-#         patch_size=1,
-#         num_heads=16,
-#         **kwargs
-#     )
+            # pred_sigma case: only add to the velocity/mean channels, leave sigma
+            model_out = torch.cat([model_out[:, :c] + residual, model_out[:, c:]], dim=1)
+        return model_out

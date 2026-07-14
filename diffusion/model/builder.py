@@ -14,9 +14,13 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import os
 import torch
 from diffusers.models import AutoencoderKL
-from mmcv import Registry
+try:
+    from mmcv import Registry
+except ImportError:
+    from mmengine import Registry
 from termcolor import colored
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig, T5EncoderModel, T5Tokenizer
 from transformers import logging as transformers_logging
@@ -81,7 +85,7 @@ def get_tokenizer_and_text_encoder(name="T5", device="cuda"):
     return tokenizer, text_encoder
 
 
-def get_vae(name, model_path, device="cuda"):
+def get_vae(name, model_path, device="cuda", finetuned_decoder=None):
     if name == "sdxl" or name == "sd3":
         vae = AutoencoderKL.from_pretrained(model_path).to(device).to(torch.float16)
         if name == "sdxl":
@@ -94,6 +98,24 @@ def get_vae(name, model_path, device="cuda"):
         if dc_ae.cfg.scaling_factor is None:
             dc_ae.cfg.scaling_factor = 0.41407  # Default from config
         return dc_ae
+    elif "TAESD" in name:
+        from diffusers import AutoencoderTiny
+        print(colored(f"[TAESD] Loading model from {model_path}", attrs=["bold"]))
+        taesd = AutoencoderTiny.from_pretrained(model_path).to(device).eval()
+
+        # Optionally swap in a Pacman fine-tuned decoder (encoder unchanged, so
+        # precomputed latents stay valid). Skip gracefully if the file is absent.
+        if finetuned_decoder:
+            if os.path.isfile(finetuned_decoder):
+                sd = torch.load(finetuned_decoder, map_location="cpu", weights_only=False)
+                sd = sd.get("vae_state_dict", sd)
+                taesd.load_state_dict(sd)
+                taesd = taesd.to(device).eval()
+                print(colored(f"[TAESD] Loaded fine-tuned decoder from {finetuned_decoder}", "green", attrs=["bold"]))
+            else:
+                print(colored(f"[TAESD] finetuned_decoder not found ({finetuned_decoder}); using stock decoder", "yellow"))
+
+        return taesd
     else:
         print("error load vae")
         exit()

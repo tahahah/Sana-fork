@@ -72,10 +72,17 @@ def save_checkpoint(
         logger.info(f"Saved checkpoint of epoch {epoch} to {file_path}.")
 
         if keep_last:
-            for i in range(epoch):
-                previous_ckgt = file_path.format(i)
-                if os.path.exists(previous_ckgt):
-                    os.remove(previous_ckgt)
+            # Keep only the most recent few step-checkpoints; never delete the one
+            # just saved. The previous `file_path.format(i)` was a no-op (the
+            # filename has no format placeholder), so it deleted the current
+            # checkpoint and left `latest.pth` dangling.
+            import glob
+            ckpts = sorted(
+                glob.glob(os.path.join(work_dir, "epoch_*_step_*.pth")),
+                key=os.path.getmtime,
+            )
+            for old in ckpts[:-6]:
+                os.remove(old)
         if add_symlink:
             link_path = os.path.join(os.path.dirname(file_path), "latest.pth")
             if os.path.exists(link_path) or os.path.islink(link_path):
@@ -86,7 +93,7 @@ def save_checkpoint(
         if upload_to_hub and "HF_TOKEN" in os.environ:
             try:
                 huggingface_hub.login(token=os.environ["HF_TOKEN"])
-                repo_id = "Tahahah/pacman-sana-3.2m"
+                repo_id = "Tahahah/pacman-sana-3.2m-taesd-v2"
                 
                 try:
                     huggingface_hub.upload_file(
@@ -151,9 +158,10 @@ def load_checkpoint(
             try:
                 if "HF_TOKEN" in os.environ:
                     huggingface_hub.login(token=os.environ["HF_TOKEN"])
+                    null_embed_filename = osp.basename(null_embed_path)
                     null_embed_file = huggingface_hub.hf_hub_download(
-                        repo_id="Tahahah/pacman-sana-3.2m",
-                        filename="pretrained_models/null_embed_diffusers_dc-ae_16.pth",
+                        repo_id="Tahahah/pacman-sana-3.2m-taesd-v2",
+                        filename=f"pretrained_models/{null_embed_filename}",
                         repo_type="model"
                     )
                     null_embed = torch.load(null_embed_file, map_location="cpu")
@@ -183,5 +191,7 @@ def load_checkpoint(
         return epoch, missing, unexpect, rng_state
 
     except Exception as e:
+        # Hard-fail: a resume that silently falls back to random init (as happened
+        # with the weights_only=True torch.load default) wastes entire runs.
         logger.error(f"Failed to load checkpoint: {e}")
-        return 0, [], [], None
+        raise

@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pacman World Model</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #0a0a0f;
+    color: #e0e0e0;
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 100vh;
+    padding: 20px;
+  }
+  h1 {
+    font-size: 1.5rem;
+    margin-bottom: 4px;
+    background: linear-gradient(90deg, #ffcc00, #ff6600);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+  .subtitle {
+    font-size: 0.8rem;
+    color: #888;
+    margin-bottom: 16px;
+  }
+  #game-container {
+    position: relative;
+    display: flex;
+    gap: 20px;
+    align-items: flex-start;
+  }
+  #canvas {
+    border: 2px solid #333;
+    border-radius: 8px;
+    image-rendering: pixelated;
+    background: #111;
+    width: 512px;
+    height: 512px;
+  }
+  #sidebar {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-width: 200px;
+  }
+  .panel {
+    background: #15151f;
+    border: 1px solid #2a2a35;
+    border-radius: 8px;
+    padding: 14px;
+  }
+  .panel h3 {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: #888;
+    margin-bottom: 10px;
+  }
+  .stat {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.85rem;
+    margin: 4px 0;
+  }
+  .stat .val { color: #ffcc00; font-weight: 600; }
+  .controls {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 6px;
+  }
+  .btn {
+    background: #1e1e2a;
+    border: 1px solid #333;
+    color: #ccc;
+    padding: 10px 0;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.8rem;
+    font-weight: 600;
+    transition: all 0.15s;
+    user-select: none;
+  }
+  .btn:hover { background: #2a2a3a; border-color: #ffcc00; color: #ffcc00; }
+  .btn:active { transform: scale(0.95); }
+  .btn.reset-btn {
+    grid-column: 1 / 4;
+    background: #2a1a1a;
+    border-color: #443333;
+  }
+  .btn.reset-btn:hover { background: #3a2222; border-color: #ff4444; color: #ff4444; }
+  .btn.no-action { grid-column: 1 / 4; }
+  #status {
+    font-size: 0.8rem;
+    color: #666;
+    text-align: center;
+    margin-top: 8px;
+    min-height: 1.2em;
+  }
+  .loading {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    color: #ffcc00;
+    font-size: 1.2rem;
+  }
+  .kbd {
+    display: inline-block;
+    background: #222;
+    border: 1px solid #444;
+    border-radius: 3px;
+    padding: 1px 5px;
+    font-size: 0.7rem;
+    color: #aaa;
+  }
+  .help {
+    font-size: 0.75rem;
+    color: #666;
+    line-height: 1.6;
+  }
+</style>
+</head>
+<body>
+  <h1>Pacman World Model</h1>
+  <div class="subtitle">Sana latent diffusion — epoch11 checkpoint, 2-step FlowEuler, autoregressive frame prediction</div>
+
+  <div id="game-container">
+    <div style="position: relative;">
+      <canvas id="canvas" width="256" height="256"></canvas>
+      <div class="loading" id="loading">Loading model...</div>
+    </div>
+    <div id="sidebar">
+      <div class="panel">
+        <h3>Stats</h3>
+        <div class="stat"><span>Episode</span><span class="val" id="stat-episode">—</span></div>
+        <div class="stat"><span>Frame</span><span class="val" id="stat-frame">0</span></div>
+        <div class="stat"><span>Latency</span><span class="val" id="stat-latency">— ms</span></div>
+        <div class="stat"><span>FPS</span><span class="val" id="stat-fps">—</span></div>
+        <div class="stat"><span>FPS Cap</span><span class="val"><input type="range" id="fps-cap" min="1" max="60" value="60" style="width:80px;vertical-align:middle"><span id="fps-cap-val" style="margin-left:6px;font-size:0.85rem">60</span></span></div>
+        <div class="stat"><span>Last action</span><span class="val" id="stat-action">—</span></div>
+      </div>
+      <div class="panel">
+        <h3>Controls</h3>
+        <div class="controls">
+          <div></div>
+          <button class="btn" data-action="UP">▲</button>
+          <div></div>
+          <button class="btn" data-action="LEFT">◀</button>
+          <button class="btn" data-action="DOWN">▼</button>
+          <button class="btn" data-action="RIGHT">▶</button>
+          <button class="btn no-action" data-action="NO_ACTION">NO ACTION</button>
+          <button class="btn reset-btn" id="reset-btn">↻ NEW EPISODE</button>
+        </div>
+      </div>
+      <div class="panel">
+        <h3>Keys</h3>
+        <div class="help">
+          <span class="kbd">←</span> <span class="kbd">→</span> <span class="kbd">↑</span> <span class="kbd">↓</span> — move<br>
+          <span class="kbd">Space</span> — no action<br>
+          <span class="kbd">R</span> — new episode<br>
+          Server streams frames at native speed (no rate cap). Press a key to send an action; if none is queued, NO_ACTION is sent. RTT is input-lag, not a per-frame tax.
+        </div>
+      </div>
+      <div id="status"></div>
+    </div>
+  </div>
+
+<script>
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const loadingEl = document.getElementById('loading');
+const statusEl = document.getElementById('status');
+const statEpisode = document.getElementById('stat-episode');
+const statFrame = document.getElementById('stat-frame');
+const statLatency = document.getElementById('stat-latency');
+const statAction = document.getElementById('stat-action');
+const statFPS = document.getElementById('stat-fps');
+let frameTimes = [];
+let lastFrameTime = 0;
+
+let ws = null;
+
+function setStatus(msg) { statusEl.textContent = msg; }
+
+function drawFrame(jpegBytes) {
+  const blob = new Blob([jpegBytes], { type: 'image/jpeg' });
+  const url = URL.createObjectURL(blob);
+  const img = new Image();
+  img.onload = () => {
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    URL.revokeObjectURL(url);
+  };
+  img.src = url;
+}
+
+function connect() {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(`${proto}//${location.host}/ws`);
+  ws.binaryType = 'arraybuffer';
+
+  ws.onopen = () => {
+    setStatus('Connected. Waiting for first frame...');
+    // Sync initial FPS cap to server
+    ws.send('fps:' + fpsCapSlider.value);
+  };
+
+  ws.onmessage = async (event) => {
+    if (typeof event.data === 'string') {
+      const meta = JSON.parse(event.data);
+      if (meta.type === 'ready') {
+        // server ready
+      } else if (meta.type === 'reset') {
+        statEpisode.textContent = meta.episode;
+        statFrame.textContent = '0';
+        statLatency.textContent = '— ms';
+        statAction.textContent = '—';
+        statFPS.textContent = '—';
+        frameTimes = [];
+        lastFrameTime = 0;
+        loadingEl.style.display = 'none';
+      } else if (meta.type === 'frame') {
+        statFrame.textContent = meta.frame;
+        statLatency.textContent = meta.latency_ms + ' ms';
+        statAction.textContent = meta.action;
+        // Track FPS from frame arrival times
+        const now = performance.now();
+        if (lastFrameTime > 0) {
+          frameTimes.push(now - lastFrameTime);
+          if (frameTimes.length > 30) frameTimes.shift();
+          const avg = frameTimes.reduce((a, b) => a + b, 0) / frameTimes.length;
+          statFPS.textContent = (1000 / avg).toFixed(1);
+        }
+        lastFrameTime = now;
+      } else if (meta.type === 'error') {
+        setStatus('Error: ' + meta.message);
+      }
+    } else {
+      // binary JPEG frame — just render it
+      drawFrame(new Uint8Array(event.data));
+    }
+  };
+
+  ws.onclose = () => {
+    setStatus('Disconnected. Reconnecting...');
+    loadingEl.style.display = 'block';
+    setTimeout(connect, 1000);
+  };
+}
+
+// Fire-and-forget: send action to server, don't wait for a response
+function sendAction(action) {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(action);
+  }
+}
+
+function doReset() {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send('reset');
+  }
+}
+
+// Keyboard — fire-and-forget
+document.addEventListener('keydown', (e) => {
+  const map = {
+    'ArrowLeft': 'LEFT', 'ArrowRight': 'RIGHT',
+    'ArrowUp': 'UP', 'ArrowDown': 'DOWN',
+    ' ': 'NO_ACTION',
+  };
+  if (e.key === 'r' || e.key === 'R') {
+    e.preventDefault();
+    doReset();
+    return;
+  }
+  const action = map[e.key];
+  if (action) {
+    e.preventDefault();
+    sendAction(action);
+  }
+});
+
+// Buttons — fire-and-forget
+document.querySelectorAll('.btn[data-action]').forEach(btn => {
+  btn.addEventListener('click', () => sendAction(btn.dataset.action));
+});
+document.getElementById('reset-btn').addEventListener('click', doReset);
+
+// FPS cap slider
+const fpsCapSlider = document.getElementById('fps-cap');
+const fpsCapVal = document.getElementById('fps-cap-val');
+fpsCapSlider.addEventListener('input', () => {
+  const v = parseInt(fpsCapSlider.value);
+  fpsCapVal.textContent = v;
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send('fps:' + v);
+  }
+});
+
+// Start
+connect();
+</script>
+</body>
+</html>

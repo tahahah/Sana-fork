@@ -26,8 +26,14 @@ import numpy as np
 import torch
 import torch.distributed as dist
 import yaml
-from mmcv import Config
-from mmcv.runner import get_dist_info
+try:
+    from mmcv import Config
+except ImportError:
+    from mmengine.config import Config
+try:
+    from mmcv.runner import get_dist_info
+except ImportError:
+    from mmengine.dist import get_dist_info
 
 from diffusion.utils.dist_utils import get_rank
 from diffusion.utils.logger import get_root_logger

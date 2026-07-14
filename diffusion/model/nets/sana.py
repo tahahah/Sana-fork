@@ -182,6 +182,7 @@ class Sana(nn.Module):
         input_size=32,
         patch_size=2,
         in_channels=4,
+        out_channels=None,
         hidden_size=1152,
         depth=28,
         num_heads=16,
@@ -207,8 +208,7 @@ class Sana(nn.Module):
     ):
         super().__init__()
         self.pred_sigma = pred_sigma
-        self.in_channels = in_channels
-        self.out_channels = in_channels * 2 if pred_sigma else in_channels
+        self.out_channels = out_channels if out_channels is not None else (in_channels * 2 if pred_sigma else in_channels)
         self.patch_size = patch_size
         self.num_heads = num_heads
         self.pe_interpolation = pe_interpolation

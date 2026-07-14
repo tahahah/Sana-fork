@@ -440,6 +440,8 @@ def model_wrapper(
                 
                 # Only double specific tensor inputs that need to be doubled
                 kwargs_copy = model_kwargs.copy()
+                if 'obs_latent' in kwargs_copy:
+                    kwargs_copy['obs_latent'] = torch.cat([kwargs_copy['obs_latent']] * 2)
                 if 'obs' in kwargs_copy:
                     kwargs_copy['obs'] = torch.cat([kwargs_copy['obs']] * 2)
                 if 'x_pixel_space' in kwargs_copy:

@@ -446,7 +446,8 @@ class GaussianDiffusion:
         :param t: the value of t, starting at 0 for the first diffusion step.
         :param clip_denoised: if True, clip the x_start prediction to [-1, 1].
         :param denoised_fn: if not None, a function which applies to the
-            x_start prediction before it is used to sample.
+            x_start prediction before it is used to sample. Applies before
+            clip_denoised.
         :param cond_fn: if not None, this is a gradient function that acts
                         similarly to the model.
         :param model_kwargs: if not None, a dict of extra keyword arguments to
